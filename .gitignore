@@ -4,6 +4,10 @@ vgg16_weights_tf_dim_ordering_tf_kernels.h5
 # Ignore Visual Studio Code settings
 .vscode/
 
+#ignore the pictures folder
+
+results/
+
 # Ignore virtual environment directories
 venv/
 env/

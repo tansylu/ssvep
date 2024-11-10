@@ -1,0 +1,48 @@
+# Ignore VGG16 weights file
+vgg16_weights_tf_dim_ordering_tf_kernels.h5
+
+# Ignore Visual Studio Code settings
+.vscode/
+
+# Ignore virtual environment directories
+venv/
+env/
+ENV/
+.venv/
+.ENV/
+
+# Ignore Python cache files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Ignore Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# Ignore system files
+.DS_Store
+Thumbs.db
+
+# Ignore logs
+*.log
+
+# Ignore compiled files
+*.so
+*.o
+*.a
+*.pyc
+*.pyo
+*.pyd
+
+# Ignore coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+.pytest_cache/

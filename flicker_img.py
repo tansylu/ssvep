@@ -21,11 +21,14 @@ def flicker_img(img_path, fq1, fq2, output_path, duration=10, fps=30, resize_dim
     for i in range(num_frames):
         frame = np.zeros_like(img)
 
-        if (i // (fps // fq1)) % 2 == 0: #flicker left half
-            frame[:, :width//2] = left_half
+        #this flickering process is the same as previous sabancı research.
+        #sinusoidal flickering of brightness from 0.5 to 1 
+        brightness_factor_left= 0.75 + 0.25 * np.sin(2*np.pi*fq1*i/fps) 
+        brightness_factor_right= 0.75 + 0.25 * np.sin(2*np.pi*fq2*i/fps)
 
-        if (i // (fps // fq2)) % 2 == 0: #flicker right half
-            frame[:, width//2:] = right_half
+        #apply changes
+        frame[:, :width // 2] = np.clip(left_half * brightness_factor_left, 0, 255).astype(np.uint8)
+        frame[:, width // 2:] = np.clip(right_half * brightness_factor_right, 0, 255).astype(np.uint8)
 
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB) #convert to RGB
         frame_resized = cv2.resize(frame_rgb, resize_dim) #resize frame
@@ -45,6 +48,6 @@ def preprocess_frame(frame, target_size):
     frame = frame.astype('float32') / 255.0 #normalize pixel values
     return frame
 
-frames = flicker_img('/Users/tansylu/Documents/kagglehub/datasets/alxmamaev/flowers-recognition/flowers/dandelion/10477378514_9ffbcec4cf_m.jpg', 5, 6, 'output_animation.gif') #example usage
+frames = flicker_img('durov.jpg', 5, 6, 'output_animation.gif') #example usage
 # target_size = (224, 224)  #example target size for CNN input
 # preprocessed_frames = [preprocess_frame(frame, target_size) for frame in frames]

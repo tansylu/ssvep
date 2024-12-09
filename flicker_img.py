@@ -48,6 +48,6 @@ def preprocess_frame(frame, target_size):
     frame = frame.astype('float32') / 255.0 #normalize pixel values
     return frame
 
-frames = flicker_img('durov.jpg', 5, 6, 'output_animation.gif') #example usage
-# target_size = (224, 224)  #example target size for CNN input
-# preprocessed_frames = [preprocess_frame(frame, target_size) for frame in frames]
+# frames = flicker_img('durov.jpg', 5, 6, 'output_animation.gif') #example usage
+# # target_size = (224, 224)  #example target size for CNN input
+# # preprocessed_frames = [preprocess_frame(frame, target_size) for frame in frames]

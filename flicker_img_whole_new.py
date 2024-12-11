@@ -19,8 +19,9 @@ def flicker_img(img_path, fq1, output_path, duration=1, fps=30, resize_dim=(640,
         frame = np.zeros_like(img)
         #this part is like the previous sabancı research range:0.5-1.0 and sinusoidal function for smoothness.
         # Sinusoidal brightness variation for flickering effect
-        brightness_factor = 0.75 + 0.25 * np.sin(2 * np.pi * fq1 * i / fps)  # Range: 0.5 to 1.0
-
+        # brightness_factor = 0.75 + 0.25 * np.sin(2 * np.pi * fq1 * i / fps)  # Range: 0.5 to 1.0
+        brightness_factor = 1
+        print(f"Frame {i+1}/{num_frames} - Brightness factor: {brightness_factor}")
         # Apply brightness changes
         frame = np.clip(img * brightness_factor, 0, 255).astype(np.uint8)
         

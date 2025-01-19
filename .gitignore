@@ -7,7 +7,8 @@ vgg16_weights_tf_dim_ordering_tf_kernels.h5
 #ignore the pictures folder
 
 results/
-
+activations_output/
+frequency_analysis/
 # Ignore virtual environment directories
 venv/
 env/

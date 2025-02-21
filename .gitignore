@@ -8,7 +8,8 @@ vgg16_weights_tf_dim_ordering_tf_kernels.h5
 
 results/
 activations_output/
-frequency_analysis/
+
+frame_plots/
 # Ignore virtual environment directories
 venv/
 env/

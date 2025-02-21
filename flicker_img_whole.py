@@ -26,8 +26,8 @@ def flicker_img(img_path, fq1, output_path, duration=1, fps=30, resize_dim=(640,
         
 
 
-        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB) #convert to RGB
-        frame_resized = cv2.resize(frame_rgb, resize_dim) #resize frame
+       
+        frame_resized = cv2.resize(frame, resize_dim) #resize frame
         frames.append(frame_resized) #add to frame list
 
     print(f"Number of frames generated: {len(frames)}")
@@ -47,4 +47,4 @@ def preprocess_frame(frame, target_size):
 #frames = flicker_img('/Users/tansylu/Documents/kagglehub/datasets/alxmamaev/flowers-recognition/flowers/dandelion/10477378514_9ffbcec4cf_m.jpg', 5, 6, 'output_animation.gif') #example usage
 # target_size = (224, 224)  #example target size for CNN input
 # preprocessed_frames = [preprocess_frame(frame, target_size) for frame in frames]
-frames = flicker_img('durov.jpg', 5, 'output_animation_whole.gif')
+#frames = flicker_img('durov.jpg', 5, 'output_animation_whole.gif')

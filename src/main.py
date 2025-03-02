@@ -1,28 +1,50 @@
 import torch
 import torchvision.transforms as transforms
 import torchvision.models as models
-from flicker_image import flicker_img_from_path
+from flicker_image import flicker_image_and_save_gif
 
-resnet18 = models.resnet18() 
+# Load ResNet18 model
+print("Loading ResNet18 model...")
+resnet18 = models.resnet18()
 
+# Define path to weights file
 weights_path = 'resnet18.pth'
-resnet18.load_state_dict(torch.load(weights_path)) #load pre-trained model weights
+print(f"Loading model weights from {weights_path}...")
 
-resnet18.eval() #set model to evaluation mode
-print(resnet18) #verify model architecture
+# Try loading the model weights
+try:
+    checkpoint = torch.load(weights_path, weights_only=False)  # Allow full loading for legacy formats
+    if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
+        print("Detected full checkpoint. Extracting model weights...")
+        checkpoint = checkpoint['model_state_dict']
+    resnet18.load_state_dict(checkpoint)
+except Exception as e:
+    print(f"Error loading model weights: {e}")
+    exit(1)
 
-# Sequence of preprocessing transformations for an image:
-# Resize the image to 224x224 pixels.
-# Convert the image into a tensor.
-# Normalize the tensor by subtracting the mean and dividing by the standard deviation for each channel, using values from the ImageNet dataset.
+# Save in a pure weights-only format for future compatibility
+torch.save(resnet18.state_dict(), 'resnet18_weights_only.pth')
+print("Converted and saved weights-only file: 'resnet18_weights_only.pth'")
 
+# Set model to evaluation mode
+print("Setting model to evaluation mode...")
+resnet18.eval()
+print("Model architecture:")
+print(resnet18)
+
+# Define preprocessing transformations
+print("Creating preprocessing sequence...")
 preprocess_seqn = transforms.Compose([
     transforms.Resize((224, 224)),
-    transforms.ToTensor(), #for converting the PIL Image to a tensor
+    transforms.ToTensor(),
     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
 ])
 
-frames = flicker_img_from_path(img_path='durov.jpg', frequency=5,  output_path='output_animation_whole.gif', duration=2, fps=30)
+# Generate flicker image and save as GIF
+print("Generating flicker image and saving as GIF...")
+frames = flicker_image_and_save_gif(image_path='durov.jpg', frequency=5, output_gif='output_animation_whole.gif', duration=2, fps=10)
+print("GIF saved as 'output_animation_whole.gif'.")
+
 # activation_model = ActivationModel(resnet18)
 # activations = _get_activations(activation_model, frames)
 # save_activations(activations, 'activations_output')

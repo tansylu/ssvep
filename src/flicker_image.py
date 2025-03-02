@@ -3,41 +3,54 @@ import numpy as np
 import imageio
 from PIL import Image
 
-def flicker_img_from_path(*, img_path, frequency, output_path, duration=1, fps=30, ):
-    img = cv2.imread(img_path) #load image
-    if img is None:
-        raise ValueError("Image not found or unable to load.")
-    print(f"Image loaded: {img_path}")
+import cv2
+import numpy as np
+import imageio
+import time
 
-    height, width, _ = img.shape #get image dimensions
-    print(f"Image dimensions: {width}x{height}")
-
-    left_half = img[:, :width//2] #split image in vertically half
-    right_half = img[:, width//2:]
-
-    num_frames = int(duration * fps) #calculate number of frames
+def flicker_image_and_save_gif(*, image_path, output_gif="flicker.gif", duration=5, frequency=2, fps=10):
+    image = cv2.imread(image_path)
+    
+    if image is None:
+        print("Error: Could not read the image.")
+        return
+    
     frames = []
+    num_frames = duration * fps
+    time_step = np.linspace(0, duration, num_frames)
 
-    for i in range(num_frames):
-        frame = np.zeros_like(img)
+    # HSV flickering
+    img_hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    hsv_intensity_channel = 2  # V channel (brightness)
+    
+    # LAB flickering
+    img_lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
+    lab_intensity_channel = 0  # L channel (lightness)
 
-        #this flickering process is the same as previous sabancı research.
-        #sinusoidal flickering of brightness from 0.5 to 1 
-        brightness_factor_left= 0.75 + 0.25 * np.sin(2*np.pi*frequency*i/fps) 
-        brightness_factor_right= 0.75 + 0.25 * np.sin(2*np.pi*frequency*i/fps)
+    for t in time_step:
+        # Sinusoidal flicker effect for both color spaces
+        alpha = 0.5 + 0.5 * np.sin(2 * np.pi * frequency * t)  # Sinusoidal flicker
+        
+        # Apply the flicker to the intensity channels in both HSV and LAB
+        hsv_flickered = img_hsv.copy()
+        hsv_flickered[:, :, hsv_intensity_channel] = np.clip(img_hsv[:, :, hsv_intensity_channel] * alpha, 0, 255)
 
-        #apply changes
-        frame[:, :width // 2] = np.clip(left_half * brightness_factor_left, 0, 255).astype(np.uint8)
-        frame[:, width // 2:] = np.clip(right_half * brightness_factor_right, 0, 255).astype(np.uint8)
+        lab_flickered = img_lab.copy()
+        lab_flickered[:, :, lab_intensity_channel] = np.clip(img_lab[:, :, lab_intensity_channel] * alpha, 0, 255)
 
-        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB) #convert to RGB
-        frames.append(frame_resized) #add to frame list
+        # Convert back to BGR for visualization (as imageio expects BGR or RGB)
+        flickered_hsv_image = cv2.cvtColor(hsv_flickered, cv2.COLOR_HSV2BGR)
+        flickered_lab_image = cv2.cvtColor(lab_flickered, cv2.COLOR_LAB2BGR)
 
-    print(f"Number of frames generated: {len(frames)}")
+        # Convert to RGB (imageio uses RGB format)
+        flickered_hsv_image_rgb = cv2.cvtColor(flickered_hsv_image, cv2.COLOR_BGR2RGB)
+        flickered_lab_image_rgb = cv2.cvtColor(flickered_lab_image, cv2.COLOR_BGR2RGB)
 
-    #imageio.mimsave(output_path, frames, fps=fps) #write frames to a gif #this one takes longer
-    pil_frames = [Image.fromarray(frame) for frame in frames]
-    pil_frames[0].save(output_path, save_all=True, append_images=pil_frames[1:], duration=int(1000/fps), loop=0)
-    print(f"GIF saved: {output_path}")
+        # Append both the HSV and LAB frames to the frames list
+        frames.append(flickered_hsv_image_rgb)
+        frames.append(flickered_lab_image_rgb)
 
-    return frames
+    # Save the frames as a GIF
+    imageio.mimsave(output_gif, frames, duration=1/fps)
+    print(f"Saved flickering GIF as {output_gif}")
+

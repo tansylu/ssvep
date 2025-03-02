@@ -42,7 +42,7 @@ preprocess_seqn = transforms.Compose([
 
 # Generate flicker image and save as GIF
 print("Generating flicker image and saving as GIF...")
-frames = flicker_image_and_save_gif(image_path='durov.jpg', frequency=5, output_gif='output_animation_whole.gif', duration=2, fps=10)
+frames = flicker_image_and_save_gif(image_path='durov.jpg', frequency=5,  duration=2, fps=30)
 print("GIF saved as 'output_animation_whole.gif'.")
 
 # activation_model = ActivationModel(resnet18)

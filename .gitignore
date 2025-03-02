@@ -3,12 +3,17 @@ vgg16_weights_tf_dim_ordering_tf_kernels.h5
 
 # Ignore Visual Studio Code settings
 .vscode/
-
+# ignore npy files
+*.npy
 #ignore the pictures folder
 
 results/
-activations_output/
-
+activations_output_hsv/
+activations_output_rgb/
+activations_output_lab/
+frames_hsv/
+frames_rgb/
+frames_lab/
 frame_plots/
 # Ignore virtual environment directories
 venv/

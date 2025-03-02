@@ -3,6 +3,7 @@ import numpy as np
 import cv2
 import os
 from PIL import Image
+from torch.nn import Module
 
 # Extract all convolutional layers
 class ActivationModel(Module):
@@ -19,7 +20,7 @@ class ActivationModel(Module):
         return activations
 
 
-def _get_activations(*, model, frames, preprocessing_sequence, color_space_func=cv2.COLOR_BGR2RGB):
+def get_activations(*, model, frames, preprocessing_sequence,):
     '''
     Extracts the activations of all layers of a model for a sequence of frames.
     Args:
@@ -31,13 +32,14 @@ def _get_activations(*, model, frames, preprocessing_sequence, color_space_func=
         A list of activations for each layer of the model.
     '''
     activations = []
-    for frame in frames:
-        img_array = cv2.cvtColor(frame, color_space_func)
-        img = Image.fromarray(img_array)
+    for i, frame in enumerate(frames):
+        print(f'Processing frame {i+1}/{len(frames)}')
+        img = Image.fromarray(frame)
         x = preprocessing_sequence(img).unsqueeze(0)  # Add batch dimension
         with torch.no_grad():
             layer_activations = model(x)  # Forward pass through the model
         activations.append(layer_activations)
+    print('Finished processing all frames.')
     return activations
 
 def save_activations(*, activations, output_dir):
@@ -50,6 +52,7 @@ def save_activations(*, activations, output_dir):
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
     for i, frame_activations in enumerate(activations):
+        print(f'Saving activations for frame {i+1}/{len(activations)}')
         for layer_idx, layer_activation in enumerate(frame_activations):
             np.save(os.path.join(output_dir, f'frame_{i}_layer_{layer_idx}.npy'), layer_activation.cpu().numpy())
-
+    print('Finished saving all activations.')

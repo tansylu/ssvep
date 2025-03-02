@@ -3,9 +3,12 @@ import torch
 import torchvision.transforms as transforms
 import torchvision.models as models
 from flicker_image import flicker_image_and_save_gif
-from model import ActivationModel, get_activations, save_activations
+from model import ActivationModel, get_activations, load_activations, save_activations, plot_activations
 from PIL import Image
 import numpy as np
+import matplotlib.pyplot as plt
+from numpy.fft import fft
+import csv
 
 def save_frames(frames, frames_dir):
     os.makedirs(frames_dir, exist_ok=True)
@@ -15,13 +18,45 @@ def save_frames(frames, frames_dir):
         frame_image.save(frame_path)
     print(f"Frames saved in '{frames_dir}' directory.")
 
-def perform_activations(model, frames, preprocess_seqn, output_dir):
-    if not os.path.exists(output_dir):
-        activations = get_activations(model=model, frames=frames, preprocessing_sequence=preprocess_seqn)
-        save_activations(activations=activations, output_dir=output_dir)
-        print(f"Activations saved in '{output_dir}' directory.")
-    else:
-        print(f"Activations directory '{output_dir}' already exists. Skipping activation extraction.")
+def load_frames(frames_dir):
+    frames = []
+    for frame_file in sorted(os.listdir(frames_dir)):
+        frame_path = os.path.join(frames_dir, frame_file)
+        frame_image = Image.open(frame_path)
+        frames.append(np.array(frame_image))
+    return frames
+
+def perform_activations(model, frames, preprocess_seqn):
+    activations = get_activations(model=model, frames=frames, preprocessing_sequence=preprocess_seqn)
+    return activations
+
+def perform_fourier_transform(activations):
+    fourier_transformed_activations = {}
+    for layer_id, filters in activations.items():
+        fourier_transformed_activations[layer_id] = {}
+        for filter_id, filter_activations in filters.items():
+            # Perform Fourier Transform on each filter's activations
+            fourier_transformed_activations[layer_id][filter_id] = [fft(frame_output) for frame_output in filter_activations]
+    return fourier_transformed_activations
+
+def find_dominant_frequencies(fourier_transformed_activations):
+    dominant_frequencies = {}
+    for layer_id, filters in fourier_transformed_activations.items():
+        dominant_frequencies[layer_id] = {}
+        for filter_id, filter_activations in filters.items():
+            # Find the dominant frequency for each filter's activations
+            dominant_freqs = [np.argmax(np.abs(frame_output)) for frame_output in filter_activations]
+            dominant_frequencies[layer_id][filter_id] = max(set(dominant_freqs), key=dominant_freqs.count)
+    return dominant_frequencies
+
+def save_dominant_frequencies_to_csv(dominant_frequencies, output_csv_path):
+    with open(output_csv_path, mode='w', newline='') as csv_file:
+        writer = csv.writer(csv_file)
+        writer.writerow(['Layer ID', 'Filter ID', 'Dominant Frequency'])
+        for layer_id, filters in dominant_frequencies.items():
+            for filter_id, dominant_freq in filters.items():
+                writer.writerow([layer_id, filter_id, dominant_freq])
+    print(f"Dominant frequencies saved to '{output_csv_path}'")
 
 # Load ResNet18 model
 print("Loading ResNet18 model...")
@@ -67,25 +102,49 @@ preprocess_seqn = transforms.Compose([
 
 # Generate flicker image and save as GIF
 gif_paths = {
-    "HSV": "flicker_hsv.gif",
-    "LAB": "flicker_lab.gif",
+    # "HSV": "flicker_hsv.gif",
+    # "LAB": "flicker_lab.gif",
     "RGB": "flicker_rgb.gif"
 }
 
 for color_format, gif_path in gif_paths.items():
+    frames_dir = f"frames_{color_format.lower()}"
     if not os.path.exists(gif_path):
         print(f"Generating flicker image and saving as GIF ({color_format})...")
-        frames = flicker_image_and_save_gif(output_gif= gif_path,image_path='durov.jpg', frequency=5, duration=2, fps=30, color_format=color_format)
-        
+        frames = flicker_image_and_save_gif(output_gif=gif_path, image_path='durov.jpg', frequency=5, duration=2, fps=30, color_format=color_format)
         # Save frames as images
-        frames_dir = f"frames_{color_format.lower()}"
         save_frames(frames, frames_dir)
-        
         print(f"GIF saved as '{gif_path}'.")
+    else:
+        print(f"GIF '{gif_path}' already exists. Loading frames from '{frames_dir}'...")
+        frames = load_frames(frames_dir)
 
+    # Check if activations directory exists
+    activations_output_dir = f'activations_output_{color_format.lower()}'
+    if not os.path.exists(activations_output_dir):
         # Perform activations for each color format
         activation_model = ActivationModel(resnet18)
-        activations_output_dir = f'activations_output_{color_format.lower()}'
-        perform_activations(activation_model, frames, preprocess_seqn, activations_output_dir)
+        activations = perform_activations(activation_model, frames, preprocess_seqn)
+        save_activations(activations=activations, output_dir=activations_output_dir)
+        print(f"Activations saved in '{activations_output_dir}' directory.")
+        
     else:
-        print(f"GIF '{gif_path}' already exists. Skipping generation.")
+        print(f"Activations directory '{activations_output_dir}' already exists. Skipping activation extraction.")
+        activations = load_activations(activations_output_dir)
+    
+    plots_output_dir = f'plots_output_{color_format.lower()}'
+    if not os.path.exists(plots_output_dir):
+        os.makedirs(plots_output_dir)
+        plot_activations(activations, plots_output_dir)
+    
+    # TODO: Fix this according to the structure of the activations dict and finish FFT
+    # # Perform Fourier Transform on activations
+    # fourier_transformed_activations = perform_fourier_transform(activations)
+    # print(f"Fourier Transform performed on activations for {color_format} color format.")
+
+    # # Find dominant frequencies
+    # dominant_frequencies = find_dominant_frequencies(fourier_transformed_activations)
+    
+    # # Save dominant frequencies to CSV
+    # output_csv_path = f'dominant_frequencies_{color_format.lower()}.csv'
+    # save_dominant_frequencies_to_csv(dominant_frequencies, output_csv_path)

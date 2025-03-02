@@ -5,9 +5,11 @@ vgg16_weights_tf_dim_ordering_tf_kernels.h5
 .vscode/
 # ignore npy files
 *.npy
+*.png
 #ignore the pictures folder
 
 results/
+activations_output/
 activations_output_hsv/
 activations_output_rgb/
 activations_output_lab/

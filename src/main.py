@@ -31,31 +31,56 @@ def perform_activations(model, frames, preprocess_seqn):
     return activations
 
 def perform_fourier_transform(activations):
+    """
+    Performs FFT on activation time series for each layer and filter.
+    Args:
+        activations: {layer_id: [frame1_tensor(1,filters,height,width), frame2_tensor...]}
+    Returns:
+        {layer_id: numpy_array(num_filters, fft_length)}
+    """
     fourier_transformed_activations = {}
-    for layer_id, filters in activations.items():
-        fourier_transformed_activations[layer_id] = {}
-        for filter_id, filter_activations in filters.items():
+    for layer_id, frames in activations.items():
+        num_filters = frames[0].shape[1]
+        num_frames = len(frames)
+        fourier_transformed_activations[layer_id] = np.zeros((num_filters, num_frames))
+        for filter_id  in range(num_filters):
+            # Get temporal sequence (the activation values of a single filter across frames)
+            temporal_sequence = [np.mean(frame[0, filter_id, :, :]) for frame in frames]
             # Perform Fourier Transform on each filter's activations
-            fourier_transformed_activations[layer_id][filter_id] = [fft(frame_output) for frame_output in filter_activations]
+            fourier_transformed_activations[layer_id][filter_id] = np.abs(fft(temporal_sequence))
     return fourier_transformed_activations
 
-def find_dominant_frequencies(fourier_transformed_activations):
+def find_dominant_frequencies(fourier_transformed_activations, fps=30):
+    """
+    Args:
+        fourier_transformed_activations: {layer_id: np.array(num_filters, fft_length)}
+        fps: sampling rate in Hz
+    Returns:
+        {layer_id: {filter_id: dominant_frequency}}
+    """
     dominant_frequencies = {}
-    for layer_id, filters in fourier_transformed_activations.items():
+    for layer_id, layer_fft in fourier_transformed_activations.items():
+        num_filters, fft_length = layer_fft.shape
+        # Get frequency bins
+        freqs = np.fft.fftfreq(fft_length, d=1/fps)
         dominant_frequencies[layer_id] = {}
-        for filter_id, filter_activations in filters.items():
-            # Find the dominant frequency for each filter's activations
-            dominant_freqs = [np.argmax(np.abs(frame_output)) for frame_output in filter_activations]
-            dominant_frequencies[layer_id][filter_id] = max(set(dominant_freqs), key=dominant_freqs.count)
+        for filter_id in range(num_filters):
+            # Get magnitudes of FFT for each filter
+            filter_fft = layer_fft[filter_id]
+            # Get the frequency with the highest magnitude (skip the DC component)
+            max_id = np.argmax(np.abs(filter_fft[1:])) + 1
+            # Store the actual frequency (Hz)
+            dominant_frequencies[layer_id][filter_id] = abs(freqs[max_id])
     return dominant_frequencies
 
 def save_dominant_frequencies_to_csv(dominant_frequencies, output_csv_path):
     with open(output_csv_path, mode='w', newline='') as csv_file:
         writer = csv.writer(csv_file)
         writer.writerow(['Layer ID', 'Filter ID', 'Dominant Frequency'])
-        for layer_id, filters in dominant_frequencies.items():
-            for filter_id, dominant_freq in filters.items():
-                writer.writerow([layer_id, filter_id, dominant_freq])
+        for layer_id in sorted(dominant_frequencies.keys()):
+            filters = dominant_frequencies[layer_id]
+            for filter_id in sorted(filters.keys()):
+                writer.writerow([layer_id, filter_id, f"{filters[filter_id]:.2f}"])
     print(f"Dominant frequencies saved to '{output_csv_path}'")
 
 # Load ResNet18 model
@@ -111,7 +136,7 @@ for color_format, gif_path in gif_paths.items():
     frames_dir = f"frames_{color_format.lower()}"
     if not os.path.exists(gif_path):
         print(f"Generating flicker image and saving as GIF ({color_format})...")
-        frames = flicker_image_and_save_gif(output_gif=gif_path, image_path='durov.jpg', frequency=5, duration=2, fps=30, color_format=color_format)
+        frames = flicker_image_and_save_gif(output_gif=gif_path, image_path='durov.jpg', frequency=7, duration=2, fps=30, color_format=color_format)
         # Save frames as images
         save_frames(frames, frames_dir)
         print(f"GIF saved as '{gif_path}'.")
@@ -137,14 +162,13 @@ for color_format, gif_path in gif_paths.items():
         os.makedirs(plots_output_dir)
         plot_activations(activations, plots_output_dir)
     
-    # TODO: Fix this according to the structure of the activations dict and finish FFT
-    # # Perform Fourier Transform on activations
-    # fourier_transformed_activations = perform_fourier_transform(activations)
-    # print(f"Fourier Transform performed on activations for {color_format} color format.")
+    # Perform Fourier Transform on activations
+    fourier_transformed_activations = perform_fourier_transform(activations)
+    print(f"Fourier Transform performed on activations for {color_format} color format.")
 
-    # # Find dominant frequencies
-    # dominant_frequencies = find_dominant_frequencies(fourier_transformed_activations)
+    # Find dominant frequencies
+    dominant_frequencies = find_dominant_frequencies(fourier_transformed_activations)
     
-    # # Save dominant frequencies to CSV
-    # output_csv_path = f'dominant_frequencies_{color_format.lower()}.csv'
-    # save_dominant_frequencies_to_csv(dominant_frequencies, output_csv_path)
+    # Save dominant frequencies to CSV
+    output_csv_path = f'dominant_frequencies_{color_format.lower()}.csv'
+    save_dominant_frequencies_to_csv(dominant_frequencies, output_csv_path)

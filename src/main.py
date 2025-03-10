@@ -73,14 +73,20 @@ def find_dominant_frequencies(fourier_transformed_activations, fps=30):
             dominant_frequencies[layer_id][filter_id] = abs(freqs[max_id])
     return dominant_frequencies
 
-def save_dominant_frequencies_to_csv(dominant_frequencies, output_csv_path):
-    with open(output_csv_path, mode='w', newline='') as csv_file:
+def save_dominant_frequencies_to_csv(dominant_frequencies, output_csv_path, image_path):
+    file_exists = os.path.exists(output_csv_path)
+    with open(output_csv_path, mode='a', newline='') as csv_file:
         writer = csv.writer(csv_file)
-        writer.writerow(['Layer ID', 'Filter ID', 'Dominant Frequency'])
+        # Write an empty row if desired
+        writer.writerow([])
+        # Then write the header row for the table data
+        if not file_exists:
+            writer.writerow(["image",'Layer ID', 'Filter ID', 'Dominant Frequency'])
+        
         for layer_id in sorted(dominant_frequencies.keys()):
             filters = dominant_frequencies[layer_id]
             for filter_id in sorted(filters.keys()):
-                writer.writerow([layer_id, filter_id, f"{filters[filter_id]:.2f}"])
+                writer.writerow([ image_path,layer_id, filter_id, f"{filters[filter_id]:.2f}"])
     print(f"Dominant frequencies saved to '{output_csv_path}'")
 
 # Load ResNet18 model
@@ -125,50 +131,71 @@ preprocess_seqn = transforms.Compose([
     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
 ])
 
-# Generate flicker image and save as GIF
+
+
+
+
+images_folder = "imgs"  # Update this with the correct folder path
+
+# List all image files (adjust extensions as needed)
+image_files = [f for f in os.listdir(images_folder) if f.lower().endswith(('.jpg', '.jpeg', '.png','.JPG'))]
+
+# Assuming gif_paths is a dictionary with color formats as keys, e.g.:
 gif_paths = {
-    # "HSV": "flicker_hsv.gif",
-    # "LAB": "flicker_lab.gif",
-    "RGB": "flicker_rgb.gif"
+    "RGB": "dummy",  # These values will be modified per image below
 }
 
-for color_format, gif_path in gif_paths.items():
-    frames_dir = f"frames_{color_format.lower()}"
-    if not os.path.exists(gif_path):
-        print(f"Generating flicker image and saving as GIF ({color_format})...")
-        frames = flicker_image_and_save_gif(output_gif=gif_path, image_path='durov.jpg', frequency=7, duration=2, fps=30, color_format=color_format)
-        # Save frames as images
-        save_frames(frames, frames_dir)
-        print(f"GIF saved as '{gif_path}'.")
-    else:
-        print(f"GIF '{gif_path}' already exists. Loading frames from '{frames_dir}'...")
-        frames = load_frames(frames_dir)
 
-    # Check if activations directory exists
-    activations_output_dir = f'activations_output_{color_format.lower()}'
-    if not os.path.exists(activations_output_dir):
-        # Perform activations for each color format
-        activation_model = ActivationModel(resnet18)
-        activations = perform_activations(activation_model, frames, preprocess_seqn)
-        save_activations(activations=activations, output_dir=activations_output_dir)
-        print(f"Activations saved in '{activations_output_dir}' directory.")
+
+for image_file in image_files:
+    # Construct full path to the image
+    image_path = os.path.join(images_folder, image_file)
+    # Extract base name without extension to use in output names
+    base_name, _ = os.path.splitext(image_file)
+    print(f"\nProcessing image: {image_path}")
+    for color_format, gif_path in gif_paths.items():
+
+         # Generate unique paths for each image and color format.
+        gif_path_modified = f"{base_name}_{color_format.lower()}.gif"
+        frames_dir = f"frames_{base_name}_{color_format.lower()}"
+        activations_output_dir = f'activations_output_{base_name}_{color_format.lower()}'
+        plots_output_dir = f'plots_output_{base_name}_{color_format.lower()}'
+        output_csv_path = f'dominant_frequencies_{base_name}_{color_format.lower()}.csv'
+
+
+        if not os.path.exists(gif_path_modified):
+            print(f"Generating flicker image and saving as GIF ({color_format})...")
+            frames = flicker_image_and_save_gif(output_gif=gif_path_modified, image_path=image_path, frequency=7, duration=2, fps=30, color_format=color_format)
+            # Save frames as images
+            save_frames(frames, frames_dir)
+            print(f"GIF saved as '{gif_path_modified}'.")
+        else:
+            print(f"GIF '{gif_path_modified}' already exists. Loading frames from '{frames_dir}'...")
+            frames = load_frames(frames_dir)
+
+        # Check if activations directory exists
+        if not os.path.exists(activations_output_dir):
+            # Perform activations for each color format
+            activation_model = ActivationModel(resnet18)
+            activations = perform_activations(activation_model, frames, preprocess_seqn)
+            save_activations(activations=activations, output_dir=activations_output_dir)
+            print(f"Activations saved in '{activations_output_dir}' directory.")
+            
+        else:
+            print(f"Activations directory '{activations_output_dir}' already exists. Skipping activation extraction.")
+            activations = load_activations(activations_output_dir)
+        ## lets not plot activations as a defult!
+        # if not os.path.exists(plots_output_dir):
+        #     os.makedirs(plots_output_dir)
+        #     plot_activations(activations, plots_output_dir)
+
+        # Perform Fourier Transform on activations
+        fourier_transformed_activations = perform_fourier_transform(activations)
+        print(f"Fourier Transform performed on activations for {color_format} color format.")
+
+        # Find dominant frequencies
+        dominant_frequencies = find_dominant_frequencies(fourier_transformed_activations)
         
-    else:
-        print(f"Activations directory '{activations_output_dir}' already exists. Skipping activation extraction.")
-        activations = load_activations(activations_output_dir)
-    
-    plots_output_dir = f'plots_output_{color_format.lower()}'
-    if not os.path.exists(plots_output_dir):
-        os.makedirs(plots_output_dir)
-        plot_activations(activations, plots_output_dir)
-    
-    # Perform Fourier Transform on activations
-    fourier_transformed_activations = perform_fourier_transform(activations)
-    print(f"Fourier Transform performed on activations for {color_format} color format.")
-
-    # Find dominant frequencies
-    dominant_frequencies = find_dominant_frequencies(fourier_transformed_activations)
-    
-    # Save dominant frequencies to CSV
-    output_csv_path = f'dominant_frequencies_{color_format.lower()}.csv'
-    save_dominant_frequencies_to_csv(dominant_frequencies, output_csv_path)
+        # Save dominant frequencies to CSV
+        output_csv_path = f'dominant_frequencies_{color_format.lower()}.csv'
+        save_dominant_frequencies_to_csv(dominant_frequencies, output_csv_path,image_path)

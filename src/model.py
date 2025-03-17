@@ -4,6 +4,54 @@ import os
 from PIL import Image
 from torch.nn import Module
 import matplotlib.pyplot as plt
+import torchvision.models as models
+import urllib.request
+def init_model():# use once to set weigths and load the model.
+    # Load ResNet18 model
+    print("Loading ResNet18 model...")
+    resnet18 = models.resnet18()
+
+    # Define path to weights file
+    weights_path = 'resnet18.pth'
+    weights_only_path = 'resnet18_weights_only.pth'
+
+    if not os.path.exists(weights_only_path):
+        print(f"Loading model weights from {weights_path}...")
+
+        # Try loading the model weights
+        try:
+            checkpoint = torch.load(weights_path, weights_only=False)  # Allow full loading for legacy formats
+            if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
+                print("Detected full checkpoint. Extracting model weights...")
+                checkpoint = checkpoint['model_state_dict']
+            resnet18.load_state_dict(checkpoint)
+        except Exception as e:
+            print(f"Error loading model weights: {e}")
+            exit(1)
+
+        # Save in a pure weights-only format for future compatibility
+        torch.save(resnet18.state_dict(), weights_only_path)
+        print(f"Converted and saved weights-only file: '{weights_only_path}'")
+    else:
+        print(f"Weights-only file '{weights_only_path}' already exists. Skipping loading and saving weights.")
+
+    # Set model to evaluation mode
+    print("Setting model to evaluation mode...")
+   
+    resnet18.eval()#sets the model into evalutaion mode which freezes BatchNorm & Dropout
+    print("Model architecture:")
+    print(resnet18)
+
+    # URL to ImageNet class labels
+    url = "https://raw.githubusercontent.com/pytorch/hub/master/imagenet_classes.txt"
+
+    # Download and load labels
+    class_labels = urllib.request.urlopen(url).read().decode("utf-8").split("\n")
+
+    # Print first 10 labels
+    print("Sample labels:", class_labels[:1000])  # First 10 classes
+
+  
 
 
 # Extract all convolutional layers
@@ -35,7 +83,7 @@ def get_activations(*, model, frames, preprocessing_sequence):
         print(f'Processing frame {i+1}/{len(frames)}')
         img = Image.fromarray(frame)
         x = preprocessing_sequence(img).unsqueeze(0)  # Add batch dimension
-        with torch.no_grad():
+        with torch.no_grad():#disable gradient computation.
             layer_activations = model(x)  # Forward pass through the model
             print(f'Frame {i+1}:')
             for layer_idx, activation in enumerate(layer_activations):
@@ -61,7 +109,7 @@ def plot_activations(activations, output_dir):
         for filter_idx in range(layer_activations[0].shape[1]):
             activation_strength = []
             for frame_activation in layer_activations:
-                mean_activation = np.mean(frame_activation[0, filter_idx, :, :])
+                mean_activation = np.mean(frame_activation[0, filter_idx, :, :])#change to l2-norm.
                 activation_strength.append(mean_activation)
             
             plt.figure(figsize=(10, 5))

@@ -2,14 +2,14 @@ from datetime import datetime
 import os
 import torch
 import torchvision.transforms as transforms
-import torchvision.models as models
 from flicker_image import flicker_image_and_save_gif
-from model import ActivationModel, get_activations, load_activations, save_activations, plot_activations
+from model import ActivationModel, get_activations, load_activations, save_activations, plot_activations,init_model
 from PIL import Image
 import numpy as np
 import matplotlib.pyplot as plt
 from numpy.fft import fft
 import csv
+
 
 def save_frames(frames, frames_dir):
     os.makedirs(frames_dir, exist_ok=True)
@@ -49,7 +49,7 @@ def perform_fourier_transform(activations, reduction_method='mean'):
     }
     
     if reduction_method not in reduction_methods:
-        raise ValueError(f"Invalid reduction method: {reduction_method}. Choose from 'mean', 'sum', 'max', 'min', 'median'.")
+        raise ValueError(f"Invalid reduction method: {reduction_method}. Choose from 'mean', 'sum', 'max', 'min', 'median'.")#try l2, better csv plots,
     
     reduce_fn = reduction_methods[reduction_method]
     
@@ -98,39 +98,6 @@ def find_dominant_frequencies(fourier_transformed_activations, fps):
             dominant_frequencies[layer_id][filter_id] = abs(freqs[max_id])
     return dominant_frequencies
 
-# Load ResNet18 model
-print("Loading ResNet18 model...")
-resnet18 = models.resnet18()
-
-# Define path to weights file
-weights_path = 'resnet18.pth'
-weights_only_path = 'resnet18_weights_only.pth'
-
-if not os.path.exists(weights_only_path):
-    print(f"Loading model weights from {weights_path}...")
-
-    # Try loading the model weights
-    try:
-        checkpoint = torch.load(weights_path, weights_only=False)  # Allow full loading for legacy formats
-        if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
-            print("Detected full checkpoint. Extracting model weights...")
-            checkpoint = checkpoint['model_state_dict']
-        resnet18.load_state_dict(checkpoint)
-    except Exception as e:
-        print(f"Error loading model weights: {e}")
-        exit(1)
-
-    # Save in a pure weights-only format for future compatibility
-    torch.save(resnet18.state_dict(), weights_only_path)
-    print(f"Converted and saved weights-only file: '{weights_only_path}'")
-else:
-    print(f"Weights-only file '{weights_only_path}' already exists. Skipping loading and saving weights.")
-
-# Set model to evaluation mode
-print("Setting model to evaluation mode...")
-resnet18.eval()
-print("Model architecture:")
-print(resnet18)
 
 # Define preprocessing transformations
 print("Creating preprocessing sequence...")

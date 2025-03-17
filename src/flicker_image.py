@@ -3,7 +3,8 @@ import numpy as np
 import imageio
 import time
 
-def flicker_image_and_save_gif(*, image_path, output_gif="flicker.gif", duration=5, frequency=2, fps=10, color_format="HSV") -> list:
+
+def flicker_image_and_save_gif(image_path="image.jpg", output_gif="flicker.gif", duration=5, frequency=4, fps=24, color_format="HSV"):
     image = cv2.imread(image_path)
     
     if image is None:

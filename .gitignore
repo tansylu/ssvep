@@ -8,6 +8,7 @@ vgg16_weights_tf_dim_ordering_tf_kernels.h5
 *.png
 #ignore the pictures folder
 
+imgs/*
 results/
 activations_output/
 activations_output_hsv/
@@ -16,7 +17,7 @@ activations_output_lab/
 frames_hsv/
 frames_rgb/
 frames_lab/
-frame_plots/
+frame_plots/*
 # Ignore virtual environment directories
 venv/
 env/

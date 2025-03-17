@@ -10,7 +10,7 @@ import matplotlib.pyplot as plt
 class ActivationModel(Module):
     def __init__(self, model):
         super(ActivationModel, self).__init__()
-        self.features = list(model.children())[:-2]  # Extract all layers except final FC layers
+        self.features = list(model.children())[:-1]  # Extract all layers except final FC layers
         self.model = torch.nn.Sequential(*self.features)
     
     def forward(self, x):

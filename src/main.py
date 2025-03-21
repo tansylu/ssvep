@@ -2,7 +2,7 @@ from datetime import datetime
 import os
 import torch
 import torchvision.transforms as transforms
-from flicker_image import flicker_image_and_save_gif
+from flicker_image import flicker_image_hh_and_save_gif #,flicker_image_and_save_gif  // if we want to flicker the image as whole 
 from model import ActivationModel, get_activations, load_activations, save_activations, plot_activations,init_model, reduce_activation
 from signal_processing import perform_fourier_transform, find_dominant_frequencies, save_dominant_frequencies_to_csv
 from PIL import Image
@@ -114,11 +114,12 @@ images_folder = "imgs"  # Update this with the correct folder path
 image_files = [f for f in os.listdir(images_folder) if f.lower().endswith(('.jpg', '.jpeg', '.png','.JPG'))]
 
 # Assuming gif_paths is a dictionary with color formats as keys, e.g.:
-gif_paths = {
-    "HSV": "dummy",  # These values will be modified per image below
+gif_paths = {   
+    "RGB": ".rgb",
+    #"HSV": ".hsv" # These values will be modified per image below
 }
 
-def plot_and_save_spectrums(fourier_transformed_activations, output_dir, fps, dominant_frequencies, gif_frequency):
+def plot_and_save_spectrums(fourier_transformed_activations, output_dir, fps, dominant_frequencies, gif_frequency1,gif_frequency2):
     """
     Plots and saves the spectrums of the Fourier Transformed activations for filters marked as "Different".
     Args:
@@ -138,7 +139,12 @@ def plot_and_save_spectrums(fourier_transformed_activations, output_dir, fps, do
         for filter_id in range(num_filters):
             dominant_frequency = dominant_frequencies[layer_id][filter_id]
             # Check if the dominant frequency is a harmonic of the GIF frequency
-            is_harmonic = any(abs(dominant_frequency - n * gif_frequency) < 0.1 for n in range(1, 11))
+            harmonic_tolerance = 0.1
+            harmonics_freq1 = [n * gif_frequency1 for n in range(1, 11)]
+            harmonics_freq2 = [n * gif_frequency2 for n in range(1, 11)]
+
+            is_harmonic = any(abs(dominant_frequency - h) < harmonic_tolerance for h in harmonics_freq1 + harmonics_freq2)
+            
             if not is_harmonic:
                 plt.figure(figsize=(10, 5))
                 # Exclude the DC component by starting from index 1
@@ -148,9 +154,13 @@ def plot_and_save_spectrums(fourier_transformed_activations, output_dir, fps, do
                 plt.ylabel('Magnitude')
                 plt.legend()
                 # Add ticks at the target frequency and its harmonics
-                harmonic_ticks = [n * gif_frequency for n in range(-2, 2)]
-                for tick in harmonic_ticks:
-                    plt.axvline(x=tick, color='r', linestyle='--', linewidth=0.5)
+                harmonic_ticks1 = [n * gif_frequency1 for n in range(-2, 3)]
+                harmonic_ticks2 = [n * gif_frequency2 for n in range(-2, 3)]
+                for tick in harmonic_ticks1:
+                    plt.axvline(x=tick, color='r', linestyle='--', linewidth=0.5, label='f1 harmonic' if tick == gif_frequency1 else "")
+                for tick in harmonic_ticks2:
+                    plt.axvline(x=tick, color='g', linestyle='--', linewidth=0.5, label='f2 harmonic' if tick == gif_frequency2 else "")
+
                 plot_path = os.path.join(output_dir, f'layer_{layer_id}_filter_{filter_id}_spectrum.png')
                 plt.savefig(plot_path)
                 plt.close()
@@ -178,7 +188,7 @@ for image_file in image_files:
 
         if not os.path.exists(gif_path_modified):
             print(f"Generating flicker image and saving as GIF ({color_format})...")
-            frames = flicker_image_and_save_gif( image_path=image_path, color_format=color_format, output_gif=gif_path_modified, duration=5, frequency=4, fps=24)
+            frames = flicker_image_hh_and_save_gif(image_path=image_path, output_gif=gif_path_modified, duration=5, frequency1=5,frequency2=6 ,fps=24,color_format=color_format)
             # Save frames as images
             save_frames(frames, frames_dir)
             print(f"GIF saved as '{gif_path_modified}'.")
@@ -205,9 +215,9 @@ for image_file in image_files:
         dominant_frequencies = find_dominant_frequencies(fourier_transformed_activations, fps=24)
         
         # Save dominant frequencies to CSV
-        save_dominant_frequencies_to_csv(dominant_frequencies, output_csv_path, image_path, gif_frequency=4)
+        save_dominant_frequencies_to_csv(dominant_frequencies, output_csv_path, image_path, gif_frequency1=5,gif_frequency2=6)
 
         # Plot and save spectrums
         spectrum_output_dir = f'spectrum_plots_{base_name}_{color_format.lower()}'
-        plot_and_save_spectrums(fourier_transformed_activations, spectrum_output_dir, fps=24, dominant_frequencies=dominant_frequencies, gif_frequency=4)
+        plot_and_save_spectrums(fourier_transformed_activations, spectrum_output_dir, fps=24, dominant_frequencies=dominant_frequencies, gif_frequency1=5,gif_frequency2=6)
         print(f"Spectrums plotted and saved in '{spectrum_output_dir}' directory.")

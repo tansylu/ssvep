@@ -58,7 +58,7 @@ def find_dominant_frequencies(fourier_transformed_activations, fps):
             dominant_frequencies[layer_id][filter_id] = abs(freqs[max_id])
     return dominant_frequencies
 
-def save_dominant_frequencies_to_csv(dominant_frequencies, output_csv_path, image_path, gif_frequency):
+def save_dominant_frequencies_to_csv(dominant_frequencies, output_csv_path, image_path, gif_frequency1,gif_frequency2):
     file_exists = os.path.exists(output_csv_path)
     with open(output_csv_path, mode='a', newline='') as csv_file:
         writer = csv.writer(csv_file)
@@ -66,14 +66,19 @@ def save_dominant_frequencies_to_csv(dominant_frequencies, output_csv_path, imag
         writer.writerow([])
         # Then write the header row for the table data
         if not file_exists:
-            writer.writerow(["Image", "Layer ID", "Filter ID", "Dominant Frequency", "GIF Frequency", "Difference", "Flag"])
+            writer.writerow(["Image", "Layer ID", "Filter ID", "Dominant Frequency", "GIF Frequency 1","GIF Frequency 2", "Difference", "Flag"])
         for layer_id in sorted(dominant_frequencies.keys()):
             filters = dominant_frequencies[layer_id]
             for filter_id in sorted(filters.keys()):
                 dominant_frequency = filters[filter_id]
-                difference = abs(dominant_frequency - gif_frequency)
+                difference = abs(dominant_frequency - gif_frequency1)
                 # Check if the dominant frequency is a harmonic of the GIF frequency
-                is_harmonic = any(abs(dominant_frequency - n * gif_frequency) < 0.1 for n in range(1, 11))  # Adjust range as needed
+                harmonic_tolerance = 0.1
+                harmonics_freq1 = [n * gif_frequency1 for n in range(1, 11)]
+                harmonics_freq2 = [n * gif_frequency2 for n in range(1, 11)]
+
+                is_harmonic = any(abs(dominant_frequency - h) < harmonic_tolerance for h in harmonics_freq1 + harmonics_freq2)
                 flag = "Different" if not is_harmonic else "Same"
-                writer.writerow([image_path, layer_id, filter_id, f"{dominant_frequency:.2f}", gif_frequency, f"{difference:.2f}", flag])
+                writer.writerow([image_path, layer_id, filter_id, f"{dominant_frequency:.2f}", gif_frequency1,gif_frequency2, f"{difference:.2f}", flag])
         print(f"Dominant frequencies saved to '{output_csv_path}'")
+            

@@ -1,5 +1,6 @@
 import numpy as np
 from numpy.fft import fft
+from scipy.signal import find_peaks
 import os
 import csv
 
@@ -12,8 +13,20 @@ def perform_fourier_transform(activations, reduction_method='mean'):
     Returns:
         {layer_id: numpy_array(num_filters, fft_length)}
     """
-    fourier_transformed_activations = {}
+    reduction_methods = {
+        'mean': np.mean,
+        'sum': np.sum,
+        'max': np.max,
+        'min': np.min,
+        'median': np.median
+    }
     
+    if reduction_method not in reduction_methods:
+        raise ValueError(f"Invalid reduction method: {reduction_method}. Choose from 'mean', 'sum', 'max', 'min', 'median'.")#try l2, better csv plots,
+    
+    reduce_fn = reduction_methods[reduction_method]
+    
+    fourier_transformed_activations = {}
     for layer_id, frames in activations.items():
         num_filters = frames[0].shape[1]
         num_frames = len(frames)
@@ -31,31 +44,49 @@ def perform_fourier_transform(activations, reduction_method='mean'):
     
     return fourier_transformed_activations
 
-def find_dominant_frequencies(fourier_transformed_activations, fps):
+def find_dominant_frequencies(fourier_transformed_activations, fps, min_prominence=0.01):
     """
+    Identifies dominant frequency peaks for each filter in each layer using peak detection.
+
     Args:
-        fourier_transformed_activations: {layer_id: np.array(num_filters, fft_length)}
-        fps: sampling rate in Hz (frames per second)
+        fourier_transformed_activations (dict): {layer_id: np.array(num_filters, fft_length)}
+        fps (float): Sampling rate in Hz (frames per second)
+        min_prominence (float): Minimum prominence of a peak (relative to max magnitude)
+
     Returns:
-        {layer_id: {filter_id: dominant_frequency}}
+        dict: {layer_id: {filter_id: dominant_frequency (Hz)}}
     """
     dominant_frequencies = {}
+
     for layer_id, layer_fft in fourier_transformed_activations.items():
         num_filters, fft_length = layer_fft.shape
-        
-        # Get frequency bins (convert to Hz by multiplying by fps)
-        freqs = np.fft.fftfreq(fft_length, d=1/fps)  # freq in Hz
-        freqs = np.fft.fftshift(freqs)  # Shift the zero frequency to the center
-        
+        # Generate frequency bins
+        freqs = np.fft.fftfreq(fft_length, d=1/fps)
+        freqs = np.fft.fftshift(freqs)  # Center zero frequency
+
         dominant_frequencies[layer_id] = {}
+
         for filter_id in range(num_filters):
-            # Get magnitudes of FFT for each filter
-            filter_fft = layer_fft[filter_id]
-            # Get the frequency with the highest magnitude (skip the DC component)
-            # Ensure the FFT is shifted to avoid the DC component causing issues
-            max_id = np.argmax(np.abs(filter_fft[1:])) + 1
-            # Store the actual frequency (Hz) corresponding to the peak of the FFT
-            dominant_frequencies[layer_id][filter_id] = abs(freqs[max_id])
+            fft_vals = layer_fft[filter_id]
+            magnitudes = np.fft.fftshift(np.abs(fft_vals))
+
+            # Remove DC component explicitly (center of fftshifted array)
+            center = fft_length // 2
+            magnitudes[center] = 0
+
+            # Find peaks in the magnitude spectrum
+            peak_indices, properties = find_peaks(
+                magnitudes,
+                prominence=min_prominence * np.max(magnitudes)
+            )
+            if len(peak_indices) == 0:
+                dominant_freq = 0
+            else:
+                # Take the highest peak
+                dominant_peak = peak_indices[np.argmax(magnitudes[peak_indices])]
+                dominant_freq = abs(freqs[dominant_peak])
+
+            dominant_frequencies[layer_id][filter_id] = dominant_freq
     return dominant_frequencies
 
 def save_dominant_frequencies_to_csv(dominant_frequencies, output_csv_path, image_path, gif_frequency1,gif_frequency2):

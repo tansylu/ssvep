@@ -50,6 +50,7 @@ def init_model():# use once to set weigths and load the model.
 
     # Print first 10 labels
     print("Sample labels:", class_labels[:1000])  # First 10 classes
+    return resnet18
 
   
 
@@ -199,3 +200,4 @@ def reduce_activation(activation, method='l2'):
     else:
         raise ValueError(f"Unknown reduction method: {method}. Valid methods are: "
                        "'l1', 'l2', 'mean', 'max', 'min', 'std', 'median', 'rms', 'energy'")
+resnet18=init_model()

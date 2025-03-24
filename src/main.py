@@ -43,7 +43,7 @@ preprocess_seqn = transforms.Compose([
     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
 ])
 
-images_folder = "imgs"  # Update this with the correct folder path
+images_folder = "img_100k"  # Update this with the correct folder path
 
 # List all image files (adjust extensions as needed)
 image_files = [f for f in os.listdir(images_folder) if f.lower().endswith(('.jpg', '.jpeg', '.png','.JPG'))]
@@ -103,7 +103,8 @@ def plot_and_save_spectrums(fourier_transformed_activations, output_dir, fps, do
 
 timestamp_now = datetime.now().strftime("%Y%m%d_%H%M%S")
         
-output_csv_path = f'dominant_frequencies_{timestamp_now}.csv'
+output_csv_path = f'dominant_frequencies.csv'
+resnet18=init_model()#only once
 # Update the main processing loop to pass the dominant frequencies and gif_frequency to the plot_and_save_spectrums function
 for image_file in image_files:
     # Construct full path to the image
@@ -118,7 +119,7 @@ for image_file in image_files:
         frames_dir = f"frames_{base_name}_{color_format.lower()}"
         activations_output_dir = f'activations_output_{base_name}_{color_format.lower()}'
         plots_output_dir = f'plots_output_{base_name}_{color_format.lower()}'
-        output_csv_path = f'dominant_frequencies_{base_name}_{color_format.lower()}.csv'
+        output_csv_path = f'dominant_frequencies.csv'
 
 
         if not os.path.exists(gif_path_modified):
@@ -153,6 +154,6 @@ for image_file in image_files:
         save_dominant_frequencies_to_csv(dominant_frequencies, output_csv_path, image_path, gif_frequency1=5,gif_frequency2=6)
 
         # Plot and save spectrums
-        spectrum_output_dir = f'spectrum_plots_{base_name}_{color_format.lower()}'
-        plot_and_save_spectrums(fourier_transformed_activations, spectrum_output_dir, fps=24, dominant_frequencies=dominant_frequencies, gif_frequency1=5,gif_frequency2=6)
-        print(f"Spectrums plotted and saved in '{spectrum_output_dir}' directory.")
+        # spectrum_output_dir = f'spectrum_plots_{base_name}_{color_format.lower()}'
+        # plot_and_save_spectrums(fourier_transformed_activations, spectrum_output_dir, fps=24, dominant_frequencies=dominant_frequencies, gif_frequency1=5,gif_frequency2=6)
+        # print(f"Spectrums plotted and saved in '{spectrum_output_dir}' directory.")

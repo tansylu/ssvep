@@ -3,10 +3,8 @@ vgg16_weights_tf_dim_ordering_tf_kernels.h5
 
 # Ignore Visual Studio Code settings
 .vscode/
-imagenet_subtrain/
-# ignore npy files
-*.npy
-*.png
+
+imgs/
 #ignore the pictures folder
 
 imgs/*

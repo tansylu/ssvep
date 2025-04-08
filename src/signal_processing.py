@@ -110,6 +110,8 @@ def save_dominant_frequencies_to_csv(dominant_frequencies, output_csv_path, imag
 
                 is_harmonic = any(abs(dominant_frequency - h) < harmonic_tolerance for h in harmonics_freq1 + harmonics_freq2)
                 flag = "Different" if not is_harmonic else "Same"
-                writer.writerow([image_path, layer_id, filter_id, f"{dominant_frequency:.2f}", gif_frequency1,gif_frequency2, f"{difference:.2f}", flag])
-        print(f"Dominant frequencies saved to '{output_csv_path}'")
+                if flag == "Different":
+                    # Save the dominant frequency and the difference
+                    writer.writerow([image_path, layer_id, filter_id, f"{dominant_frequency:.2f}", gif_frequency1,gif_frequency2, f"{difference:.2f}", flag])
+        # print(f"Dominant frequencies saved to '{output_csv_path}'")
             

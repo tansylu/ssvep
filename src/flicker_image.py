@@ -19,7 +19,7 @@ def flicker_image_and_save_gif(image_path="image.jpg", output_gif="flicker.gif",
     num_frames = duration * fps
     time_step = np.linspace(0, duration, num_frames)
 
-    print(f"Generating {num_frames} frames for {duration} seconds at {fps} FPS... in {color_format} format")
+    # print(f"Generating {num_frames} frames for {duration} seconds at {fps} FPS... in {color_format} format")
     if color_format == "HSV":
         img_color = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
         intensity_channel = 2  # V channel (brightness)
@@ -59,9 +59,9 @@ def flicker_image_and_save_gif(image_path="image.jpg", output_gif="flicker.gif",
         frames.append(flickered_image_rgb)
 
     # Save the flickered frames as a GIF
-    imageio.mimsave(output_gif, frames, duration=1/fps)
+    # imageio.mimsave(output_gif, frames, duration=1/fps)
 
-    print(f"Saved flickering GIF as {output_gif} ({color_format} flickering)")
+    # print(f"Saved flickering GIF as {output_gif} ({color_format} flickering)")
     return frames
 
 # Example usage:
@@ -82,7 +82,7 @@ def flicker_image_hh_and_save_gif(image_path="image.jpg", output_gif="flicker.gi
     num_frames = duration * fps
     time_step = np.linspace(0, duration, num_frames)
 
-    print(f"Generating {num_frames} frames for {duration} seconds at {fps} FPS... in {color_format} format")
+    # print(f"Generating {num_frames} frames for {duration} seconds at {fps} FPS... in {color_format} format")
     if color_format == "HSV":
         img_color = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)#conversions are done on BGR
         intensity_channel = 2  # V channel (brightness)
@@ -136,9 +136,9 @@ def flicker_image_hh_and_save_gif(image_path="image.jpg", output_gif="flicker.gi
         frames.append(flickered_image_rgb)
 
     # Save the flickered frames as a GIF
-    imageio.mimsave(output_gif, frames, duration=1/fps)
+    # imageio.mimsave(output_gif, frames, duration=1/fps)
 
-    print(f"Saved flickering GIF as {output_gif} ({color_format} flickering)")
+    # print(f"Saved flickering GIF as {output_gif} ({color_format} flickering)")
     return frames
 
 # Example usage:

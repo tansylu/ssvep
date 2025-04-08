@@ -43,7 +43,7 @@ preprocess_seqn = transforms.Compose([
     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
 ])
 
-images_folder = "img_100k"  # Update this with the correct folder path
+images_folder = "imgs"  # Update this with the correct folder path
 
 # List all image files (adjust extensions as needed)
 image_files = [f for f in os.listdir(images_folder) if f.lower().endswith(('.jpg', '.jpeg', '.png','.JPG'))]
@@ -105,13 +105,20 @@ timestamp_now = datetime.now().strftime("%Y%m%d_%H%M%S")
         
 output_csv_path = f'dominant_frequencies.csv'
 resnet18=init_model()#only once
+LIMIT = 10000
+COUNTER = 0
 # Update the main processing loop to pass the dominant frequencies and gif_frequency to the plot_and_save_spectrums function
 for image_file in image_files:
+    if COUNTER >= LIMIT:
+        print(f"Processed {LIMIT} images. Stopping further processing.")
+        break
+    print(f"\nProcessing image {COUNTER + 1}/{LIMIT}: {image_file}")
+    COUNTER += 1
     # Construct full path to the image
     image_path = os.path.join(images_folder, image_file)
     # Extract base name without extension to use in output names
     base_name, _ = os.path.splitext(image_file)
-    print(f"\nProcessing image: {image_path}")
+    # print(f"\nProcessing image: {image_path}")
     for color_format, gif_path in gif_paths.items():
 
         # Generate unique paths for each image and color format.
@@ -123,13 +130,13 @@ for image_file in image_files:
 
 
         if not os.path.exists(gif_path_modified):
-            print(f"Generating flicker image and saving as GIF ({color_format})...")
+            # print(f"Generating flicker image and saving as GIF ({color_format})...")
             frames = flicker_image_hh_and_save_gif(image_path=image_path, output_gif=gif_path_modified, duration=5, frequency1=5,frequency2=6 ,fps=24,color_format=color_format)
             # Save frames as images
-            save_frames(frames, frames_dir)
-            print(f"GIF saved as '{gif_path_modified}'.")
+            # save_frames(frames, frames_dir)
+            # print(f"GIF saved as '{gif_path_modified}'.")
         else:
-            print(f"GIF '{gif_path_modified}' already exists. Loading frames from '{frames_dir}'...")
+            # print(f"GIF '{gif_path_modified}' already exists. Loading frames from '{frames_dir}'...")
             frames = load_frames(frames_dir)
 
         # Check if activations directory exists
@@ -137,15 +144,15 @@ for image_file in image_files:
             # Perform activations for each color format
             activation_model = ActivationModel(resnet18)
             activations = perform_activations(activation_model, frames, preprocess_seqn)
-            save_activations(activations=activations, output_dir=activations_output_dir)
-            print(f"Activations saved in '{activations_output_dir}' directory.")
+            # save_activations(activations=activations, output_dir=activations_output_dir)
+            # print(f"Activations saved in '{activations_output_dir}' directory.")
         else:
-            print(f"Activations directory '{activations_output_dir}' already exists. Skipping activation extraction.")
+            # print(f"Activations directory '{activations_output_dir}' already exists. Skipping activation extraction.")
             activations = load_activations(activations_output_dir)
 
         # Perform Fourier Transform on activations
         fourier_transformed_activations = perform_fourier_transform(activations, reduction_method='mean')
-        print(f"Fourier Transform performed on activations for {color_format} color format.")
+        # print(f"Fourier Transform performed on activations for {color_format} color format.")
 
         # Find dominant frequencies
         dominant_frequencies = find_dominant_frequencies(fourier_transformed_activations, fps=24)

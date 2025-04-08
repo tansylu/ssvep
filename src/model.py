@@ -81,18 +81,14 @@ def get_activations(*, model, frames, preprocessing_sequence):
     '''
     activations = {}
     for i, frame in enumerate(frames):
-        print(f'Processing frame {i+1}/{len(frames)}')
         img = Image.fromarray(frame)
         x = preprocessing_sequence(img).unsqueeze(0)  # Add batch dimension
         with torch.no_grad():#disable gradient computation.
             layer_activations = model(x)  # Forward pass through the model
-            print(f'Frame {i+1}:')
             for layer_idx, activation in enumerate(layer_activations):
-                print(f'  Layer {layer_idx+1}: shape {activation.shape}')
                 if layer_idx not in activations:
                     activations[layer_idx] = []
                 activations[layer_idx].append(activation.cpu().numpy())
-    print('Finished processing all frames.')
     return activations
 
 

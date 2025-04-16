@@ -205,14 +205,14 @@ def save_dominant_frequencies_to_csv(dominant_frequencies, output_csv_path, imag
         if not file_exists:
             header = ["Image", "Layer ID", "Filter ID"]
             # Add column for each peak
-            num_peaks = len(next(iter(next(iter(dominant_frequencies.values())).values())))
+            num_peaks = 3
             for i in range(num_peaks):
                 header.append(f"Peak {i+1} Freq")
             header.extend(["GIF Frequency 1", "GIF Frequency 2", "Flag"])
             writer.writerow(header)
             
         # Set harmonic detection parameters
-        harmonic_tolerance = 0.1
+        harmonic_tolerance = 1
         
         for layer_id in sorted(dominant_frequencies.keys()):
             filters = dominant_frequencies[layer_id]
@@ -237,6 +237,6 @@ def save_dominant_frequencies_to_csv(dominant_frequencies, output_csv_path, imag
                     row = [image_path, layer_id, filter_id]
                     # Add all peak frequencies with formatting
                     for peak in peak_frequencies:
-                        row.append(f"{peak:.2f}" if peak > 0 else "0")
+                        row.append(f"{peak:.10f}" if peak > 0 else "0")
                     row.extend([gif_frequency1, gif_frequency2, flag])
                     writer.writerow(row)

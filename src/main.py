@@ -4,7 +4,7 @@ from random import shuffle
 import torch
 import torchvision.transforms as transforms
 from flicker_image import flicker_image_hh_and_save_gif #,flicker_image_and_save_gif  // if we want to flicker the image as whole 
-from model import ActivationModel, get_activations, load_activations, save_activations, plot_activations,init_model, reduce_activation
+from model import  get_activations, load_activations, save_activations, plot_activations,init_model, reduce_activation
 from signal_processing import perform_fourier_transform, find_dominant_frequencies, save_dominant_frequencies_to_csv
 from PIL import Image
 import numpy as np
@@ -146,7 +146,7 @@ for image_file in image_files:
         # Check if activations directory exists
         if not os.path.exists(activations_output_dir):
             # Perform activations for each color format
-            activation_model = ActivationModel(resnet18)
+            activation_model = init_model()
             activations = perform_activations(activation_model, frames, preprocess_seqn)
             # save_activations(activations=activations, output_dir=activations_output_dir)
             # print(f"Activations saved in '{activations_output_dir}' directory.")

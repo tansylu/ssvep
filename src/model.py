@@ -6,6 +6,7 @@ from torch.nn import Module
 import matplotlib.pyplot as plt
 import torchvision.models as models
 import urllib.request
+
 def init_model():# use once to set weigths and load the model.
     # Load ResNet18 model
     print("Loading ResNet18 model...")
@@ -37,7 +38,7 @@ def init_model():# use once to set weigths and load the model.
 
     # Set model to evaluation mode
     print("Setting model to evaluation mode...")
-   
+
     resnet18.eval()#sets the model into evalutaion mode which freezes BatchNorm & Dropout
     print("Model architecture:")
     print(resnet18)
@@ -52,26 +53,14 @@ def init_model():# use once to set weigths and load the model.
     print("Sample labels:", class_labels[:1000])  # First 10 classes
     return resnet18
 
-  
 
 
-# Extract all convolutional layers
-class ActivationModel(Module):
-    def __init__(self, model):
-        super(ActivationModel, self).__init__()
-        self.features = list(model.children())[:-2]  # Extract all layers except final FC layers
-        self.model = torch.nn.Sequential(*self.features)
-    
-    def forward(self, x):
-        activations = []
-        for layer in self.model:
-            x = layer(x)
-            activations.append(x)
-        return activations
+
+# Function to extract activations using hooks
 
 def get_activations(*, model, frames, preprocessing_sequence):
     '''
-    Extracts the activations of all layers of a model for a sequence of frames.
+    Extracts the activations of all layers of a model for a sequence of frames using hooks.
     Args:
         model: A PyTorch model.
         frames: A list of frames.
@@ -79,16 +68,48 @@ def get_activations(*, model, frames, preprocessing_sequence):
     Returns:
         A dictionary where keys are layer indices and values are lists of activations for each frame.
     '''
+    # Dictionary to store activations
     activations = {}
-    for i, frame in enumerate(frames):
+    hooks = []
+    layer_idx_map = {}
+
+    # Define hook function
+    def hook_fn(layer_idx):
+        def _hook(_module, _input, output):
+            # Store the output of the layer
+            if layer_idx not in activations:
+                activations[layer_idx] = []
+            # Convert to numpy and store
+            activations[layer_idx].append(output.detach().cpu().numpy())
+        return _hook
+
+    # Register hooks for layers we're interested in
+    idx = 0
+    for name, module in model.named_modules():
+        if isinstance(module, (torch.nn.Conv2d, torch.nn.Linear)):
+            layer_idx_map[name] = idx
+            hooks.append(module.register_forward_hook(hook_fn(idx)))
+            idx += 1
+
+    # Process each frame
+    for frame_idx, frame in enumerate(frames):
         img = Image.fromarray(frame)
         x = preprocessing_sequence(img).unsqueeze(0)  # Add batch dimension
-        with torch.no_grad():#disable gradient computation.
-            layer_activations = model(x)  # Forward pass through the model
-            for layer_idx, activation in enumerate(layer_activations):
-                if layer_idx not in activations:
-                    activations[layer_idx] = []
-                activations[layer_idx].append(activation.cpu().numpy())
+        with torch.no_grad():  # disable gradient computation
+            _ = model(x)  # Forward pass through the model
+
+        if frame_idx % 100 == 0 and frame_idx > 0:
+            print(f"Processed {frame_idx}/{len(frames)} frames")
+
+    # Remove hooks
+    for hook in hooks:
+        hook.remove()
+
+    # Print layer mapping for reference
+    print("Layer index mapping:")
+    for name, idx in layer_idx_map.items():
+        print(f"  Layer {idx}: {name}")
+
     return activations
 
 
@@ -101,14 +122,14 @@ def plot_activations(activations, output_dir):
     '''
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
-    
+
     for layer_idx, layer_activations in activations.items():
         for filter_idx in range(layer_activations[0].shape[1]):
             activation_strength = []
             for frame_activation in layer_activations:
                 max_activation = np.max(frame_activation[0, filter_idx, :, :])#change to l2-norm.
                 activation_strength.append(max_activation)
-            
+
             plt.figure(figsize=(10, 5))
             plt.plot(activation_strength, label=f'Filter {filter_idx}')
             plt.title(f'Layer {layer_idx+1} Filter {filter_idx} Activations Over Frames')

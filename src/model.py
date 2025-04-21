@@ -40,20 +40,16 @@ def init_model():# use once to set weigths and load the model.
     print("Setting model to evaluation mode...")
 
     resnet18.eval()#sets the model into evalutaion mode which freezes BatchNorm & Dropout
-    print("Model architecture:")
-    print(resnet18)
 
-    # URL to ImageNet class labels
-    url = "https://raw.githubusercontent.com/pytorch/hub/master/imagenet_classes.txt"
-
-    # Download and load labels
-    class_labels = urllib.request.urlopen(url).read().decode("utf-8").split("\n")
     return resnet18
 
 
 
 
 # Function to extract activations using hooks
+
+# Global variable to track if filter counts have been printed
+_filter_counts_printed = False
 
 def get_activations(*, model, frames, preprocessing_sequence):
     '''
@@ -85,8 +81,8 @@ def get_activations(*, model, frames, preprocessing_sequence):
     for name, module in model.named_modules():
         # Only include Conv2d layers (exclude Linear/FC layers)
         if isinstance(module, torch.nn.Conv2d):
-            # Skip the first convolutional layer (layer 0)
-            if idx > 0 or 'conv1' not in name.lower():
+            # Skip the first convolutional layer (layer 0) and downsample layers (7, 12, 17)
+            if  'downsample' not in name:
                 layer_idx_map[name] = idx
                 hooks.append(module.register_forward_hook(hook_fn(idx)))
             idx += 1
@@ -105,10 +101,29 @@ def get_activations(*, model, frames, preprocessing_sequence):
     for hook in hooks:
         hook.remove()
 
-    # Print layer mapping for reference
-    print("Layer index mapping:")
-    for name, idx in layer_idx_map.items():
-        print(f"  Layer {idx}: {name}")
+    # Print layer mapping for reference with number of filters (only once)
+    global _filter_counts_printed
+    if not _filter_counts_printed:
+        print("Layer index mapping:")
+
+        # Create a dictionary to store filter counts for each layer
+        layer_filter_counts = {}
+
+        # Count filters in each layer's activation
+        for layer_idx, layer_activations in activations.items():
+            if layer_activations and len(layer_activations) > 0:
+                # Get the number of filters from the first frame's activation
+                # Shape is typically [batch_size, num_filters, height, width]
+                num_filters = layer_activations[0].shape[1]
+                layer_filter_counts[layer_idx] = num_filters
+
+        # Print layer mapping with filter counts
+        for name, idx in layer_idx_map.items():
+            num_filters = layer_filter_counts.get(idx, 0)
+            print(f"  Layer {idx}: {name} - {num_filters} filters")
+
+        # Set the flag to True so we don't print again
+        _filter_counts_printed = True
 
     return activations
 

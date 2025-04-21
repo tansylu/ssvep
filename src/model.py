@@ -59,7 +59,7 @@ def init_model():# use once to set weigths and load the model.
 class ActivationModel(Module):
     def __init__(self, model):
         super(ActivationModel, self).__init__()
-        self.features = list(model.children())[:-1]  # Extract all layers except final FC layers
+        self.features = list(model.children())[:-2]  # Extract all layers except final FC layers
         self.model = torch.nn.Sequential(*self.features)
     
     def forward(self, x):
@@ -106,8 +106,8 @@ def plot_activations(activations, output_dir):
         for filter_idx in range(layer_activations[0].shape[1]):
             activation_strength = []
             for frame_activation in layer_activations:
-                mean_activation = np.mean(frame_activation[0, filter_idx, :, :])#change to l2-norm.
-                activation_strength.append(mean_activation)
+                max_activation = np.max(frame_activation[0, filter_idx, :, :])#change to l2-norm.
+                activation_strength.append(max_activation)
             
             plt.figure(figsize=(10, 5))
             plt.plot(activation_strength, label=f'Filter {filter_idx}')
@@ -196,4 +196,3 @@ def reduce_activation(activation, method='l2'):
     else:
         raise ValueError(f"Unknown reduction method: {method}. Valid methods are: "
                        "'l1', 'l2', 'mean', 'max', 'min', 'std', 'median', 'rms', 'energy'")
-resnet18=init_model()

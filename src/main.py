@@ -155,7 +155,7 @@ for image_file in image_files:
             activations = load_activations(activations_output_dir)
 
         # Perform Fourier Transform on activations
-        fourier_transformed_activations = perform_fourier_transform(activations, reduction_method='mean')
+        fourier_transformed_activations = perform_fourier_transform(activations, reduction_method='median')
         # print(f"Fourier Transform performed on activations for {color_format} color format.")
 
         # Find dominant frequencies

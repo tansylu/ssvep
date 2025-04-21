@@ -17,7 +17,8 @@ def perform_fourier_transform(activations, reduction_method='mean'):
         'sum': np.sum,
         'max': np.max,
         'min': np.min,
-        'median': np.median
+        'median': np.median,
+        'std': np.std
     }
     
     if reduction_method not in reduction_methods:
@@ -40,6 +41,11 @@ def perform_fourier_transform(activations, reduction_method='mean'):
             
             # Perform Fourier Transform on the temporal sequence
             fourier_transformed_activations[layer_id][filter_id] = np.abs(fft(temporal_sequence))
+
+            # if fft returns all 0 magnitudes, breakpoint
+            if np.all(fourier_transformed_activations[layer_id][filter_id] == 0):
+                print(f"Warning: All zero magnitudes for layer {layer_id}, filter {filter_id}. Check the input data.")
+           
     
     return fourier_transformed_activations
 
@@ -182,10 +188,13 @@ def find_dominant_frequencies(fourier_transformed_activations, fps, threshold_fa
                     peak_idx = sorted_peaks[i]
                     freq = abs(freqs[peak_idx])
                     top_frequencies.append(freq)
+            else:
+                # No peaks found, append NaN or zero
+                top_frequencies = [np.nan] * num_peaks
             
             # Pad with zeros if fewer than num_peaks were found
             while len(top_frequencies) < num_peaks:
-                top_frequencies.append(0)
+                top_frequencies.append(np.nan)
                 
             # Store the top frequencies
             dominant_frequencies[layer_id][filter_id] = top_frequencies
@@ -237,6 +246,6 @@ def save_dominant_frequencies_to_csv(dominant_frequencies, output_csv_path, imag
                     row = [image_path, layer_id, filter_id]
                     # Add all peak frequencies with formatting
                     for peak in peak_frequencies:
-                        row.append(f"{peak:.10f}" if peak > 0 else "0")
+                        row.append(f"{peak:.10f}" if peak > 0 else np.nan)
                     row.extend([gif_frequency1, gif_frequency2, flag])
                     writer.writerow(row)

@@ -253,11 +253,11 @@ def save_dominant_frequencies_to_csv(dominant_frequencies, output_csv_path, imag
 
                 flag = "Same" if is_harmonic else "Different"
 
-                if flag == "Different":
-                    # Format row data
-                    row = [image_path, layer_id, filter_id]
-                    # Add all peak frequencies with formatting
-                    for peak in peak_frequencies:
-                        row.append(f"{peak:.10f}" if peak > 0 else np.nan)
-                    row.extend([gif_frequency1, gif_frequency2, flag])
-                    writer.writerow(row)
+                
+                # Format row data
+                row = [image_path, layer_id, filter_id]
+                # Add all peak frequencies with formatting
+                for peak in peak_frequencies:
+                    row.append(f"{peak:.10f}" if peak > 0 else np.nan)
+                row.extend([gif_frequency1, gif_frequency2, flag])
+                writer.writerow(row)

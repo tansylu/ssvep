@@ -13,10 +13,6 @@ from numpy.fft import fft
 import csv
 import sys
 
-# Add parent directory to path to import filter_scoring
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-import filter_scoring
-
 
 def save_frames(frames, frames_dir):
     os.makedirs(frames_dir, exist_ok=True)
@@ -47,7 +43,7 @@ preprocess_seqn = transforms.Compose([
     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
 ])
 
-images_folder = "imgs"
+images_folder = "test"
 
 # List all image files (adjust extensions as needed)
 image_files = [f for f in os.listdir(images_folder) if f.lower().endswith(('.jpg', '.jpeg', '.png','.JPG'))]
@@ -88,26 +84,25 @@ def plot_and_save_spectrums(fourier_transformed_activations, output_dir, fps, do
                 for peak in peak_frequencies if peak > 0
             )
 
-            if not is_harmonic:
-                plt.figure(figsize=(10, 5))
-                # Exclude the DC component by starting from index 1
-                plt.bar(freqs[1:], np.abs(layer_fft[filter_id][1:]), width=0.05, label=f'Filter {filter_id}')
-                plt.title(f'Layer {layer_id+1} Filter {filter_id} Spectrum')
-                plt.xlabel('Frequency')
-                plt.ylabel('Magnitude')
-                plt.legend()
-                # Add ticks at the target frequency and its harmonics
-                harmonic_ticks1 = [n * gif_frequency1 for n in range(-2, 3)]
-                harmonic_ticks2 = [n * gif_frequency2 for n in range(-2, 3)]
-                for tick in harmonic_ticks1:
-                    plt.axvline(x=tick, color='r', linestyle='--', linewidth=0.5, label='f1 harmonic' if tick == gif_frequency1 else "")
-                for tick in harmonic_ticks2:
-                    plt.axvline(x=tick, color='g', linestyle='--', linewidth=0.5, label='f2 harmonic' if tick == gif_frequency2 else "")
+            plt.figure(figsize=(10, 5))
+            # Exclude the DC component by starting from index 1
+            plt.bar(freqs[1:], np.abs(layer_fft[filter_id][1:]), width=0.05, label=f'Filter {filter_id}')
+            plt.title(f'Layer {layer_id+1} Filter {filter_id} Spectrum')
+            plt.xlabel('Frequency')
+            plt.ylabel('Magnitude')
+            plt.legend()
+            # Add ticks at the target frequency and its harmonics
+            harmonic_ticks1 = [n * gif_frequency1 for n in range(-2, 3)]
+            harmonic_ticks2 = [n * gif_frequency2 for n in range(-2, 3)]
+            for tick in harmonic_ticks1:
+                plt.axvline(x=tick, color='r', linestyle='--', linewidth=0.5, label='f1 harmonic' if tick == gif_frequency1 else "")
+            for tick in harmonic_ticks2:
+                plt.axvline(x=tick, color='g', linestyle='--', linewidth=0.5, label='f2 harmonic' if tick == gif_frequency2 else "")
 
-                plot_path = os.path.join(output_dir, f'layer_{layer_id}_filter_{filter_id}_spectrum.png')
-                plt.savefig(plot_path)
-                plt.close()
-                print(f'Saved spectrum plot for Layer {layer_id+1} Filter {filter_id} at {plot_path}')
+            plot_path = os.path.join(output_dir, f'layer_{layer_id}_filter_{filter_id}_spectrum.png')
+            plt.savefig(plot_path)
+            plt.close()
+            print(f'Saved spectrum plot for Layer {layer_id+1} Filter {filter_id} at {plot_path}')
 
 timestamp_now = datetime.now().strftime("%Y%m%d_%H%M%S")
 
@@ -133,7 +128,7 @@ for csv_path in [output_csv_path_2n, output_csv_path_4n, output_csv_path_snr]:
             writer.writerow(header)
 
 # Set a small limit for testing
-LIMIT = 10000
+LIMIT = 1
 COUNTER = 0
 # shuffle the list of image files
 shuffle(image_files)
@@ -164,19 +159,19 @@ for image_file in image_files:
             # print(f"Generating flicker image and saving as GIF ({color_format})...")
             frames = flicker_image_hh_and_save_gif(image_path=image_path, output_gif=gif_path_modified, duration=5, frequency1=5,frequency2=6 ,fps=24,color_format=color_format)
             # Save frames as images
-            # save_frames(frames, frames_dir)
-            # print(f"GIF saved as '{gif_path_modified}'.")
+            save_frames(frames, frames_dir)
+            print(f"GIF saved as '{gif_path_modified}'.")
         else:
             print(f"GIF '{gif_path_modified}' already exists. Loading frames from '{frames_dir}'...")
-            # frames = load_frames(frames_dir)
+            frames = load_frames(frames_dir)
 
         # Check if activations directory exists
         if not os.path.exists(activations_output_dir):
             # Perform activations for each color format
       
             activations = perform_activations(activation_model, frames, preprocess_seqn)
-            # save_activations(activations=activations, output_dir=activations_output_dir)
-            # print(f"Activations saved in '{activations_output_dir}' directory.")
+            save_activations(activations=activations, output_dir=activations_output_dir)
+            print(f"Activations saved in '{activations_output_dir}' directory.")
         else:
             print(f"Activations directory '{activations_output_dir}' already exists. Skipping activation extraction.")
             activations = load_activations(activations_output_dir)
@@ -196,52 +191,6 @@ for image_file in image_files:
         # save_dominant_frequencies_to_csv(dominant_frequencies_snr, output_csv_path_snr, image_path, gif_frequency1=5,gif_frequency2=6)
 
         # Plot and save spectrums
-        # spectrum_output_dir = f'spectrum_plots_{base_name}_{color_format.lower()}'
-        # plot_and_save_spectrums(fourier_transformed_activations, spectrum_output_dir, fps=24, dominant_frequencies=dominant_frequencies_2n, gif_frequency1=5,gif_frequency2=6)
-        # print(f"Spectrums plotted and saved in '{spectrum_output_dir}' directory.")
-
-# After processing all images, run the filter scoring analysis
-print("\n" + "="*50)
-print("Running filter scoring analysis...")
-print("="*50)
-
-# File paths for the different detection methods
-files = {
-    
-    '2N': output_csv_path_2n,
-   
-}
-
-# Create results directory
-os.makedirs('filter_scoring', exist_ok=True)
-
-# Load data
-print("Loading filter data...")
-df = filter_scoring.load_filter_data(files)
-
-if df.empty:
-    print("No data found. Please check that the CSV files contain valid data.")
-    exit(1)
-
-# Calculate metrics
-print("Calculating filter metrics...")
-metrics_df = filter_scoring.calculate_filter_metrics(df)
-
-# Score filters
-print("Scoring filters...")
-scored_filters = filter_scoring.score_filters(metrics_df)
-
-# Identify filters to prune
-print("Identifying filters to prune...")
-filters_to_keep, filters_to_prune = filter_scoring.identify_filters_to_prune(scored_filters, keep_percentage=0.2)
-
-# Plot results
-print("Plotting results...")
-filter_scoring.plot_filter_scores(scored_filters, output_file='filter_scoring/filter_scores.png')
-
-# Save results
-filter_scoring.save_filter_scores(scored_filters, output_file='filter_scoring/filter_scores.csv')
-filter_scoring.save_pruning_results(filters_to_keep, filters_to_prune, output_file='filter_scoring/pruning_results.txt')
-
-print(f"\nAnalysis complete. Results saved to 'filter_scoring/' directory.")
-print(f"Found {len(filters_to_keep)} filters to keep and {len(filters_to_prune)} filters to prune.")
+        spectrum_output_dir = f'spectrum_plots_{base_name}_{color_format.lower()}'
+        plot_and_save_spectrums(fourier_transformed_activations, spectrum_output_dir, fps=24, dominant_frequencies=dominant_frequencies_2n, gif_frequency1=5,gif_frequency2=6)
+        print(f"Spectrums plotted and saved in '{spectrum_output_dir}' directory.")

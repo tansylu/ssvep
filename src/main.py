@@ -3,7 +3,7 @@ import os
 from random import shuffle
 import torch
 import torchvision.transforms as transforms
-from flicker_image import flicker_image_hh_and_save_gif #,flicker_image_and_save_gif  // if we want to flicker the image as whole 
+from flicker_image import flicker_image_hh_and_save_gif #,flicker_image_and_save_gif  // if we want to flicker the image as whole
 from model import  get_activations, load_activations, save_activations, plot_activations,init_model, reduce_activation
 from signal_processing import perform_fourier_transform, find_dominant_frequencies, save_dominant_frequencies_to_csv
 from PIL import Image
@@ -48,7 +48,7 @@ images_folder = "imgs"
 image_files = [f for f in os.listdir(images_folder) if f.lower().endswith(('.jpg', '.jpeg', '.png','.JPG'))]
 
 # Assuming gif_paths is a dictionary with color formats as keys, e.g.:
-gif_paths = {   
+gif_paths = {
     "RGB": ".rgb",
     #"HSV": ".hsv" # These values will be modified per image below
 }
@@ -64,21 +64,25 @@ def plot_and_save_spectrums(fourier_transformed_activations, output_dir, fps, do
     """
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
-    
+
     for layer_id, layer_fft in fourier_transformed_activations.items():
         num_filters, fft_length = layer_fft.shape
         freqs = np.fft.fftfreq(fft_length, d=1/fps)  # freq in Hz
         freqs = np.fft.fftshift(freqs)  # Shift the zero frequency to the center
-        
+
         for filter_id in range(num_filters):
-            dominant_frequency = dominant_frequencies[layer_id][filter_id]
-            # Check if the dominant frequency is a harmonic of the GIF frequency
+            peak_frequencies = dominant_frequencies[layer_id][filter_id]
+            # Check if any of the dominant frequencies is a harmonic of the GIF frequency
             harmonic_tolerance = 0.1
             harmonics_freq1 = [n * gif_frequency1 for n in range(1, 11)]
             harmonics_freq2 = [n * gif_frequency2 for n in range(1, 11)]
+            all_harmonics = harmonics_freq1 + harmonics_freq2
 
-            is_harmonic = any(abs(dominant_frequency - h) < harmonic_tolerance for h in harmonics_freq1 + harmonics_freq2)
-            
+            is_harmonic = any(
+                any(abs(peak - h) < harmonic_tolerance for h in all_harmonics)
+                for peak in peak_frequencies if peak > 0
+            )
+
             if not is_harmonic:
                 plt.figure(figsize=(10, 5))
                 # Exclude the DC component by starting from index 1
@@ -101,7 +105,7 @@ def plot_and_save_spectrums(fourier_transformed_activations, output_dir, fps, do
                 print(f'Saved spectrum plot for Layer {layer_id+1} Filter {filter_id} at {plot_path}')
 
 timestamp_now = datetime.now().strftime("%Y%m%d_%H%M%S")
-        
+
 output_csv_path = f'dominant_frequencies.csv'
 resnet18 = init_model() # Initialize only once
 
@@ -167,8 +171,8 @@ for image_file in image_files:
         save_dominant_frequencies_to_csv(dominant_frequencies_2n, output_csv_path_2n, image_path, gif_frequency1=5,gif_frequency2=6)
         save_dominant_frequencies_to_csv(dominant_frequencies_4n, output_csv_path_4n, image_path, gif_frequency1=5,gif_frequency2=6)
         save_dominant_frequencies_to_csv(dominant_frequencies_snr, output_csv_path_snr, image_path, gif_frequency1=5,gif_frequency2=6)
-        
+
         # Plot and save spectrums
-        # spectrum_output_dir = f'spectrum_plots_{base_name}_{color_format.lower()}'
-        # plot_and_save_spectrums(fourier_transformed_activations, spectrum_output_dir, fps=24, dominant_frequencies=dominant_frequencies, gif_frequency1=5,gif_frequency2=6)
-        # print(f"Spectrums plotted and saved in '{spectrum_output_dir}' directory.")
+        spectrum_output_dir = f'spectrum_plots_{base_name}_{color_format.lower()}'
+        plot_and_save_spectrums(fourier_transformed_activations, spectrum_output_dir, fps=24, dominant_frequencies=dominant_frequencies_2n, gif_frequency1=5,gif_frequency2=6)
+        print(f"Spectrums plotted and saved in '{spectrum_output_dir}' directory.")

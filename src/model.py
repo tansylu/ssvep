@@ -48,9 +48,6 @@ def init_model():# use once to set weigths and load the model.
 
     # Download and load labels
     class_labels = urllib.request.urlopen(url).read().decode("utf-8").split("\n")
-
-    # Print first 10 labels
-    print("Sample labels:", class_labels[:1000])  # First 10 classes
     return resnet18
 
 
@@ -86,9 +83,12 @@ def get_activations(*, model, frames, preprocessing_sequence):
     # Register hooks for layers we're interested in
     idx = 0
     for name, module in model.named_modules():
-        if isinstance(module, (torch.nn.Conv2d, torch.nn.Linear)):
-            layer_idx_map[name] = idx
-            hooks.append(module.register_forward_hook(hook_fn(idx)))
+        # Only include Conv2d layers (exclude Linear/FC layers)
+        if isinstance(module, torch.nn.Conv2d):
+            # Skip the first convolutional layer (layer 0)
+            if idx > 0 or 'conv1' not in name.lower():
+                layer_idx_map[name] = idx
+                hooks.append(module.register_forward_hook(hook_fn(idx)))
             idx += 1
 
     # Process each frame

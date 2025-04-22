@@ -13,7 +13,6 @@ from numpy.fft import fft
 import csv
 import sys
 import argparse
-import json
 
 
 def save_frames(frames, frames_dir):
@@ -23,6 +22,78 @@ def save_frames(frames, frames_dir):
         frame_path = os.path.join(frames_dir, f"frame_{i}.png")
         frame_image.save(frame_path)
     #print(f"Frames saved in '{frames_dir}' directory.")
+
+def save_filter_stats_to_csv(filter_stats_table, csv_file_path, image_file=None):
+    """
+    Save filter statistics to a CSV file.
+    Args:
+        filter_stats_table: Dictionary with filter statistics
+        csv_file_path: Path to the CSV file
+        image_file: Current image being processed (optional)
+    """
+    # Check if file exists to determine if we need to create a new file
+    file_exists = os.path.exists(csv_file_path)
+
+    # Prepare data for CSV
+    csv_data = {}
+
+    # If file exists, read the current data
+    if file_exists:
+        with open(csv_file_path, 'r', newline='') as csvfile:
+            reader = csv.reader(csvfile)
+            try:
+                next(reader)  # Skip header row
+                for row in reader:
+                    if len(row) >= 6:  # Ensure row has enough columns
+                        layer_id, filter_id = row[0], row[1]
+                        key = (layer_id, filter_id)
+                        csv_data[key] = {
+                            'layer': layer_id,
+                            'filter': filter_id,
+                            'different': int(row[2]),
+                            'same': int(row[3]),
+                            'total': int(row[4]),
+                            'diff_percent': float(row[5])
+                        }
+            except StopIteration:
+                # File is empty or has only a header
+                pass
+
+    # Update with current data
+    for (layer_id, filter_id), stats in filter_stats_table.items():
+        total = stats["different"] + stats["same"]
+        if total > 0:
+            diff_percent = (stats["different"] / total) * 100
+            key = (str(layer_id), str(filter_id))
+            csv_data[key] = {
+                'layer': layer_id,
+                'filter': filter_id,
+                'different': stats["different"],
+                'same': stats["same"],
+                'total': total,
+                'diff_percent': diff_percent
+            }
+
+    # Sort by difference percentage
+    sorted_data = sorted(csv_data.values(), key=lambda x: x['diff_percent'], reverse=True)
+
+    # Write to CSV
+    with open(csv_file_path, 'w', newline='') as csvfile:
+        writer = csv.writer(csvfile)
+
+        # Write header
+        writer.writerow(["Layer", "Filter", "Different", "Same", "Total", "Diff %"])
+
+        # Write data
+        for item in sorted_data:
+            writer.writerow([
+                item['layer'],
+                item['filter'],
+                item['different'],
+                item['same'],
+                item['total'],
+                f"{item['diff_percent']:.2f}"
+            ])
 
 def load_frames(frames_dir):
     frames = []
@@ -45,10 +116,10 @@ preprocess_seqn = transforms.Compose([
     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
 ])
 
-images_folder = "imgs"
+images_folder = "test"
 
 # List all image files (adjust extensions as needed)
-image_files = [f for f in os.listdir(images_folder) if f.lower().endswith(('.jpg', '.jpeg', '.png','.JPG'))]
+image_files = [f for f in os.listdir(images_folder) if f.lower().endswith(('.jpg', '.jpeg', '.png'))]
 
 # Assuming gif_paths is a dictionary with color formats as keys, e.g.:
 gif_paths = {
@@ -66,8 +137,6 @@ def plot_and_save_spectrums(fourier_transformed_activations, output_dir, fps, do
         gif_frequency2: The second frequency of the GIF used for comparison.
         specific_filter_id: If provided, only plot this specific filter ID.
         specific_layer_id: If provided, only plot this specific layer ID.
-        non_harmonic_f1: If True, only plot spectrums that are not harmonics of frequency 1.
-        non_harmonic_any: If True, only plot spectrums that are not harmonics of either frequency.
         non_intermod: If True, only plot spectrums that are not intermodulation products (f1*f2).
     """
     if not os.path.exists(output_dir):
@@ -100,32 +169,6 @@ def plot_and_save_spectrums(fourier_transformed_activations, output_dir, fps, do
             # Set harmonic detection parameters
             harmonic_tolerance = 1
 
-            # Check for different types of harmonics using the global method
-            is_harmonic = is_harmonic_frequency(
-                peak_frequencies=peak_frequencies,
-                freq1=gif_frequency1,
-                freq2=gif_frequency2,
-                harmonic_type=HarmonicType.ANY,
-                tolerance=harmonic_tolerance
-            )
-
-            # Check specifically for harmonics of frequency 1
-            is_harmonic_f1 = is_harmonic_frequency(
-                peak_frequencies=peak_frequencies,
-                freq1=gif_frequency1,
-                freq2=gif_frequency2,
-                harmonic_type=HarmonicType.FREQ1,
-                tolerance=harmonic_tolerance
-            )
-
-            # Check specifically for harmonics of frequency 2
-            is_harmonic_f2 = is_harmonic_frequency(
-                peak_frequencies=peak_frequencies,
-                freq1=gif_frequency1,
-                freq2=gif_frequency2,
-                harmonic_type=HarmonicType.FREQ2,
-                tolerance=harmonic_tolerance
-            )
 
             # Check for intermodulation products
             is_intermod = is_harmonic_frequency(
@@ -135,13 +178,6 @@ def plot_and_save_spectrums(fourier_transformed_activations, output_dir, fps, do
                 harmonic_type=HarmonicType.INTERMOD,
                 tolerance=harmonic_tolerance
             )
-
-            # Apply filters based on command-line arguments
-            if non_harmonic_f1 and is_harmonic_f1:
-                continue
-
-            if non_harmonic_any and (is_harmonic_f1 or is_harmonic_f2):
-                continue
 
             if non_intermod and is_intermod:
                 continue
@@ -193,25 +229,19 @@ parser.add_argument('--layer-id', type=int, help='Specific layer ID to plot')
 parser.add_argument('--reduction', type=str, default='power',
                     choices=['mean', 'sum', 'max', 'min', 'median', 'std', 'power'],
                     help='Reduction method for spatial dimensions (default: power)')
-parser.add_argument('--non-harmonic-f1', action='store_true',
-                    help='Only plot spectrums that are not harmonics of frequency 1')
-parser.add_argument('--non-harmonic-any', action='store_true',
-                    help='Only plot spectrums that are not harmonics of either frequency')
-parser.add_argument('--non-intermod', action='store_true',
+parser.add_argument('--non-intermod', action='store_true', default=True,
                     help='Only plot spectrums that are not intermodulation products (f1*f2)')
 
 args = parser.parse_args()
 
 timestamp_now = datetime.now().strftime("%Y%m%d_%H%M%S")
 
+# Initialize the stats table
+filter_stats_table = {}  # {(layer_id, filter_id): {"different": 0, "same": 0, "total_images": 0, "images": set()}}
+csv_stats_file = f'filter_stats_{timestamp_now}.csv'
+
 # Initialize only once
 resnet18 = init_model()
-
-# Create a counter dictionary to track Different/Same counts per layer+filter combination
-filter_counts = {}  # {(layer_id, filter_id): {"Different": count, "Same": count, "images": {image_path: "Different"|"Same"}}}
-
-# Output JSON file path
-filter_counts_json = f'filter_counts_{timestamp_now}.json'
 
 # Set a small limit for testing
 LIMIT = 2
@@ -222,19 +252,15 @@ shuffle(image_files)
 image_files = image_files[:LIMIT]
 activation_model = init_model()
 
-# Update the main processing loop to pass the dominant frequencies and gif_frequency to the plot_and_save_spectrums function
+# Update the main processing loop
 for image_file in image_files:
     if COUNTER >= LIMIT:
-        #print(f"Processed {LIMIT} images. Stopping further processing.")
         break
-    #print(f"\nProcessing image {COUNTER + 1}/{LIMIT}: {image_file}")
     COUNTER += 1
     print(f"\nProcessing image: {image_file}")
-    # Construct full path to the image
     image_path = os.path.join(images_folder, image_file)
-    # Extract base name without extension to use in output names
     base_name, _ = os.path.splitext(image_file)
-    #print(f"\nProcessing image: {image_path}")
+
     for color_format, gif_path in gif_paths.items():
 
         # Generate unique paths for each image and color format.
@@ -274,169 +300,53 @@ for image_file in image_files:
         # dominant_frequencies_4n = find_dominant_frequencies(fourier_transformed_activations, fps=24, threshold_factor=1.2, num_peaks=3, min_snr=3.0, method='four_neighbours')
         # dominant_frequencies_snr = find_dominant_frequencies(fourier_transformed_activations, fps=24, threshold_factor=2.0, num_peaks=3, min_snr=2.0, method='snr')
 
-        # Instead of updating CSV, we'll update our counter dictionary
-
-        # Analyze the dominant frequencies before plotting
-        #print("\nAnalyzing dominant frequencies for this image...")
-
-        # Count 'Different' vs 'Same' flags
-        different_count = 0
-        same_count = 0
-        different_by_layer = {}
-        different_filters = []
-        top_different_filters = []  # Initialize this variable for later use
-
+        # Update the filter statistics
         for layer_id in dominant_frequencies_2n:
             for filter_id in dominant_frequencies_2n[layer_id]:
                 peak_frequencies = dominant_frequencies_2n[layer_id][filter_id]
 
-                # Check if any peak is a harmonic
                 is_harmonic = is_harmonic_frequency(
                     peak_frequencies=peak_frequencies,
-                    freq1=5,  # gif_frequency1
-                    freq2=6,  # gif_frequency2
+                    freq1=5,
+                    freq2=6,
                     harmonic_type=HarmonicType.ANY,
                     tolerance=0.1
                 )
 
-                # Create a key for this layer+filter combination
                 filter_key = (layer_id, filter_id)
-
-                # Initialize the counter for this filter if it doesn't exist
-                if filter_key not in filter_counts:
-                    filter_counts[filter_key] = {
-                        "Different": 0,
-                        "Same": 0,
-                        "images": {}
+                if filter_key not in filter_stats_table:
+                    filter_stats_table[filter_key] = {
+                        "different": 0,
+                        "same": 0,
+                        "total_images": 0,
+                        "images": set()
                     }
 
-                # Update the counter
                 if is_harmonic:
-                    same_count += 1
-                    filter_counts[filter_key]["Same"] += 1
-                    filter_counts[filter_key]["images"][image_path] = "Same"
+                    filter_stats_table[filter_key]["same"] += 1
                 else:
-                    different_count += 1
-                    filter_counts[filter_key]["Different"] += 1
-                    filter_counts[filter_key]["images"][image_path] = "Different"
-                    if layer_id not in different_by_layer:
-                        different_by_layer[layer_id] = 0
-                    different_by_layer[layer_id] += 1
-                    different_filters.append((layer_id, filter_id))
+                    filter_stats_table[filter_key]["different"] += 1
 
-        # Calculate percentages
-        total_count = different_count + same_count
-        different_percent = (different_count / total_count) * 100 if total_count > 0 else 0
+                filter_stats_table[filter_key]["total_images"] += 1
+                filter_stats_table[filter_key]["images"].add(image_path)
 
-        #print(f"\nFlag distribution:")
-        #print(f"- Different: {different_count} ({different_percent:.2f}%)")
-        #print(f"- Same: {same_count} ({100 - different_percent:.2f}%)")
+        # Save filter statistics to CSV file after each image
+        save_filter_stats_to_csv(filter_stats_table, csv_stats_file, image_file)
 
-        if different_count > 0:
-            #print("\nDistribution of 'Different' flags by layer:")
-            for layer_id in sorted(different_by_layer.keys()):
-                layer_percent = (different_by_layer[layer_id] / different_count) * 100
-                #print(f"- Layer {layer_id}: {different_by_layer[layer_id]} ({layer_percent:.2f}%)")
-
-            # Calculate the percentage of 'Different' flags per filter
-            filter_stats = {}
-            total_filters = {}
-
-            # Count total occurrences of each filter
-            for layer_id in dominant_frequencies_2n:
-                for filter_id in dominant_frequencies_2n[layer_id]:
-                    filter_key = (layer_id, filter_id)
-                    if filter_key not in total_filters:
-                        total_filters[filter_key] = 0
-                    total_filters[filter_key] += 1
-
-            # Calculate percentage of 'Different' flags for each filter
-            from collections import Counter
-            different_filter_counts = Counter(different_filters)
-            for filter_key, diff_count in different_filter_counts.items():
-                total_count = total_filters.get(filter_key, 0)
-                if total_count > 0:
-                    percentage = (diff_count / total_count) * 100
-                    filter_stats[filter_key] = (diff_count, total_count, percentage)
-
-            # Sort filters by percentage of 'Different' flags
-            top_different_filters = sorted(filter_stats.items(), key=lambda x: x[1][2], reverse=True)[:10]
-
-            #print("\nTop 10 filters with highest percentage of 'Different' flags:")
-            for (layer_id, filter_id), (diff_count, total_count, percentage) in top_different_filters:
-                print(f"- Layer {layer_id}, Filter {filter_id}: {diff_count}/{total_count} ({percentage:.2f}%)")
-
+        # No print statements needed
 
         # Plot and save spectrums
         spectrum_output_dir = f'spectrum_plots_{base_name}_{color_format.lower()}'
 
         # If user specified filter/layer IDs or used filtering options, use those
-        if args.filter_id is not None or args.layer_id is not None or args.non_harmonic_f1 or args.non_harmonic_any or args.non_intermod:
-            plot_and_save_spectrums(
-                fourier_transformed_activations,
-                spectrum_output_dir,
-                fps=60,
-                dominant_frequencies=dominant_frequencies_2n,
-                gif_frequency1=5,
-                gif_frequency2=6,
-                specific_filter_id=args.filter_id,
-                specific_layer_id=args.layer_id,
-                non_harmonic_f1=args.non_harmonic_f1,
-                non_harmonic_any=args.non_harmonic_any,
-                non_intermod=args.non_intermod
-            )
-            #print(f"Spectrums plotted and saved in '{spectrum_output_dir}' directory.")
-
-        else:
-            plot_and_save_spectrums(
-                fourier_transformed_activations,
-                spectrum_output_dir,
-                fps=60,
-                dominant_frequencies=dominant_frequencies_2n,
-                gif_frequency1=5,
-                gif_frequency2=6,
-                specific_filter_id=args.filter_id,
-                specific_layer_id=args.layer_id,
-                non_harmonic_f1=args.non_harmonic_f1,
-                non_harmonic_any=args.non_harmonic_any,
-                non_intermod=args.non_intermod
-            )
-            #print(f"Spectrums plotted and saved in '{spectrum_output_dir}' directory.")
-
-# After processing all images, save the filter counts to a JSON file
-# Convert tuple keys to strings for JSON serialization
-filter_counts_serializable = {}
-for (layer_id, filter_id), counts in filter_counts.items():
-    filter_counts_serializable[f"layer_{layer_id}_filter_{filter_id}"] = counts
-
-# Calculate percentages for each filter
-for filter_key, counts in filter_counts_serializable.items():
-    total = counts["Different"] + counts["Same"]
-    if total > 0:
-        counts["different_percent"] = (counts["Different"] / total) * 100
-        counts["same_percent"] = (counts["Same"] / total) * 100
-    else:
-        counts["different_percent"] = 0
-        counts["same_percent"] = 0
-
-# Save to JSON file
-with open(filter_counts_json, 'w') as f:
-    json.dump(filter_counts_serializable, f, indent=2)
-
-print(f"\nFilter counts saved to {filter_counts_json}")
-
-# Print summary of results
-print("\nSummary of results:")
-print(f"Total layer+filter combinations: {len(filter_counts)}")
-
-# Sort filters by percentage of 'Different' flags
-sorted_filters = sorted(
-    [(k, v) for k, v in filter_counts_serializable.items() if v["Different"] + v["Same"] > 0],
-    key=lambda x: x[1]["different_percent"],
-    reverse=True
-)
-
-# Print top 10 filters with highest percentage of 'Different' flags
-print("\nTop 10 filters with highest percentage of 'Different' flags:")
-for i, (filter_key, counts) in enumerate(sorted_filters[:10], 1):
-    print(f"{i}. {filter_key}: {counts['Different']}/{counts['Different'] + counts['Same']} ({counts['different_percent']:.2f}%)")
+        plot_and_save_spectrums(
+            fourier_transformed_activations,
+            spectrum_output_dir,
+            fps=60,
+            dominant_frequencies=dominant_frequencies_2n,
+            gif_frequency1=5,
+            gif_frequency2=6,
+            specific_filter_id=args.filter_id,
+            specific_layer_id=args.layer_id,
+            non_intermod=args.non_intermod
+        )

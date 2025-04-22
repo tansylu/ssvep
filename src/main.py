@@ -123,7 +123,7 @@ preprocess_seqn = transforms.Compose([
     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
 ])
 
-images_folder = "test"
+images_folder = "imgs_100"
 
 # List all image files (adjust extensions as needed)
 image_files = [f for f in os.listdir(images_folder) if f.lower().endswith(('.jpg', '.jpeg', '.png'))]
@@ -262,7 +262,7 @@ csv_stats_file = f'filter_stats_{timestamp_now}.csv'
 resnet18 = init_model()
 
 # Set a small limit for testing
-LIMIT = 2
+LIMIT = 100
 COUNTER = 0
 # shuffle the list of image files
 shuffle(image_files)
@@ -333,7 +333,7 @@ for image_file in image_files:
             fps=fps,
             reduction_method=reduction_method,
             gif_frequency1=gif_frequency1,
-            gif_frequency2=gif_frequency2
+            gif_frequency2=gif_frequency2,
         )
         print(f"FFT results saved to database with run ID: {run_id}")
 
@@ -372,21 +372,3 @@ for image_file in image_files:
         print(f"Saving filter statistics to database for {image_file}...")
         db_stats.update_filter_stats(filter_stats_table, image_path)
         print("Filter statistics saved to database.")
-
-        # No print statements needed
-
-        # Plot and save spectrums
-        spectrum_output_dir = f'spectrum_plots_{base_name}_{color_format.lower()}'
-
-        # If user specified filter/layer IDs or used filtering options, use those
-        plot_and_save_spectrums(
-            fourier_transformed_activations,
-            spectrum_output_dir,
-            fps=60,
-            dominant_frequencies=dominant_frequencies_2n,
-            gif_frequency1=5,
-            gif_frequency2=6,
-            specific_filter_id=args.filter_id,
-            specific_layer_id=args.layer_id,
-            non_intermod=args.non_intermod
-        )

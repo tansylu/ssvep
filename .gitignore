@@ -5,6 +5,7 @@ vgg16_weights_tf_dim_ordering_tf_kernels.h5
 .vscode/
 *.csv
 imgs/
+imgs*/
 #ignore the pictures folder
 spectr*/
 run*/

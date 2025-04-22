@@ -220,7 +220,7 @@ def save_dominant_frequencies(run_id, dominant_frequencies, gif_frequency1=None,
     cursor = conn.cursor()
 
     # Set harmonic detection parameters
-    harmonic_tolerance = 1
+    HARMONIC_TOLERANCE = 1
 
     for layer_id in dominant_frequencies:
         filters = dominant_frequencies[layer_id]
@@ -238,7 +238,7 @@ def save_dominant_frequencies(run_id, dominant_frequencies, gif_frequency1=None,
                     freq1=gif_frequency1,
                     freq2=gif_frequency2,
                     harmonic_type=HarmonicType.ANY,
-                    tolerance=harmonic_tolerance
+                    tolerance=HARMONIC_TOLERANCE
                 )
 
                 # Check for FREQ1 harmonic
@@ -247,7 +247,7 @@ def save_dominant_frequencies(run_id, dominant_frequencies, gif_frequency1=None,
                     freq1=gif_frequency1,
                     freq2=gif_frequency2,
                     harmonic_type=HarmonicType.FREQ1,
-                    tolerance=harmonic_tolerance
+                    tolerance=HARMONIC_TOLERANCE
                 )
 
                 # Check for FREQ2 harmonic
@@ -256,7 +256,7 @@ def save_dominant_frequencies(run_id, dominant_frequencies, gif_frequency1=None,
                     freq1=gif_frequency1,
                     freq2=gif_frequency2,
                     harmonic_type=HarmonicType.FREQ2,
-                    tolerance=harmonic_tolerance
+                    tolerance=HARMONIC_TOLERANCE
                 )
 
                 # Check for INTERMOD harmonic
@@ -265,7 +265,7 @@ def save_dominant_frequencies(run_id, dominant_frequencies, gif_frequency1=None,
                     freq1=gif_frequency1,
                     freq2=gif_frequency2,
                     harmonic_type=HarmonicType.INTERMOD,
-                    tolerance=harmonic_tolerance
+                    tolerance=HARMONIC_TOLERANCE
                 )
 
                 is_harmonic = is_harmonic_any

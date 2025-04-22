@@ -12,7 +12,7 @@ class HarmonicType(Enum):
     FREQ2 = 2     # Check if frequency is a harmonic of frequency 2
     INTERMOD = 3  # Check if frequency is an intermodulation product
 
-def is_harmonic_frequency(peak_frequencies, freq1, freq2, harmonic_type=HarmonicType.ANY, tolerance=0.1, max_harmonic=12, max_intermod_order=5):
+def is_harmonic_frequency(peak_frequencies, freq1, freq2, harmonic_type=HarmonicType.ANY, tolerance=1, max_harmonic=12, max_intermod_order=5):
     """
     Checks if any of the peak frequencies is a harmonic of the base frequencies.
 
@@ -55,7 +55,7 @@ def is_harmonic_frequency(peak_frequencies, freq1, freq2, harmonic_type=Harmonic
 
     # Check if any peak is a harmonic (ignoring zeros/negatives)
     return any(
-        any(abs(peak - h) < tolerance for h in check_freqs)
+        any(abs(peak - h) <= tolerance for h in check_freqs)
         for peak in peak_frequencies if peak > 0
     )
 

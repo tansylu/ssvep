@@ -5,7 +5,7 @@ import torch
 import torchvision.transforms as transforms
 from flicker_image import flicker_image_hh_and_save_gif
 from model import get_activations, load_activations, save_activations, init_model
-from signal_processing import perform_fourier_transform, find_dominant_frequencies, save_dominant_frequencies_to_csv
+from signal_processing import perform_fourier_transform, find_dominant_frequencies, save_dominant_frequencies_to_csv, is_harmonic_frequency, HarmonicType
 from PIL import Image
 import numpy as np
 import matplotlib.pyplot as plt
@@ -124,13 +124,14 @@ def plot_and_save_spectrums(fourier_transformed_activations, output_dir, fps, do
             peak_frequencies = dominant_frequencies[layer_id][filter_id]
             # Check if any of the dominant frequencies is a harmonic of the GIF frequency
             harmonic_tolerance = 0.1
-            harmonics_freq1 = [n * gif_frequency1 for n in range(1, 11)]
-            harmonics_freq2 = [n * gif_frequency2 for n in range(1, 11)]
-            all_harmonics = harmonics_freq1 + harmonics_freq2
 
-            is_harmonic = any(
-                any(abs(peak - h) < harmonic_tolerance for h in all_harmonics)
-                for peak in peak_frequencies if peak > 0
+            # Use the global method to check for harmonics
+            is_harmonic = is_harmonic_frequency(
+                peak_frequencies=peak_frequencies,
+                freq1=gif_frequency1,
+                freq2=gif_frequency2,
+                harmonic_type=HarmonicType.ANY,
+                tolerance=harmonic_tolerance
             )
 
             plt.figure(figsize=(10, 5))

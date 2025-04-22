@@ -97,9 +97,6 @@ def get_activations(*, model, frames, preprocessing_sequence):
         with torch.no_grad():  # disable gradient computation
             _ = model(x)  # Forward pass through the model
 
-        if frame_idx % 100 == 0 and frame_idx > 0:
-            print(f"Processed {frame_idx}/{len(frames)} frames")
-
     # Remove hooks
     for hook in hooks:
         hook.remove()
@@ -195,43 +192,3 @@ def load_activations(output_dir):
                 activations[layer_idx].append(None)
             activations[layer_idx][frame_idx] = activation
     return activations
-
-def reduce_activation(activation, method='l2'):
-    """
-    Reduces a filter's activation map to a single value using specified method.
-    Args:
-        activation: numpy array of shape (H, W) - spatial dimensions of filter activation
-        method: string, reduction method:
-            - 'l1': L1 norm (sum of absolute values)
-            - 'l2': L2 norm (sqrt of sum of squares)
-            - 'mean': average of all values
-            - 'max': maximum value
-            - 'min': minimum value
-            - 'std': standard deviation
-            - 'median': median value
-            - 'rms': root mean square (L2 normalized)
-            - 'energy': sum of squared values (L2 norm squared)
-    Returns:
-        float: single value representing filter's activation
-    """
-    if method == 'l2':
-        return np.sqrt(np.sum(activation ** 2))
-    elif method == 'l1':
-        return np.sum(np.abs(activation))
-    elif method == 'mean':
-        return np.mean(activation)
-    elif method == 'max':
-        return np.max(activation)
-    elif method == 'min':
-        return np.min(activation)
-    elif method == 'std':
-        return np.std(activation)
-    elif method == 'median':
-        return np.median(activation)
-    elif method == 'rms':
-        return np.sqrt(np.mean(activation ** 2))
-    elif method == 'energy':
-        return np.sum(activation ** 2)
-    else:
-        raise ValueError(f"Unknown reduction method: {method}. Valid methods are: "
-                       "'l1', 'l2', 'mean', 'max', 'min', 'std', 'median', 'rms', 'energy'")

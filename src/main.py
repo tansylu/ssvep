@@ -4,18 +4,14 @@ from random import shuffle
 import torch
 import torchvision.transforms as transforms
 from flicker_image import flicker_image_hh_and_save_gif #,flicker_image_and_save_gif  // if we want to flicker the image as whole
-from model import  get_activations, load_activations, save_activations, plot_activations,init_model, reduce_activation
-from signal_processing import perform_fourier_transform, find_dominant_frequencies, save_dominant_frequencies_to_csv
+from model import  get_activations, load_activations, save_activations, plot_activations,init_model
+from signal_processing import perform_fourier_transform, find_dominant_frequencies, save_dominant_frequencies_to_csv, is_harmonic_frequency, HarmonicType
 from PIL import Image
 import numpy as np
 import matplotlib.pyplot as plt
 from numpy.fft import fft
 import csv
 import sys
-
-# Add parent directory to path to import filter_scoring
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-import filter_scoring
 
 
 def save_frames(frames, frames_dir):
@@ -78,14 +74,15 @@ def plot_and_save_spectrums(fourier_transformed_activations, output_dir, fps, do
         for filter_id in range(num_filters):
             peak_frequencies = dominant_frequencies[layer_id][filter_id]
             # Check if any of the dominant frequencies is a harmonic of the GIF frequency
-            harmonic_tolerance = 0.1
-            harmonics_freq1 = [n * gif_frequency1 for n in range(1, 11)]
-            harmonics_freq2 = [n * gif_frequency2 for n in range(1, 11)]
-            all_harmonics = harmonics_freq1 + harmonics_freq2
+            harmonic_tolerance = 1
 
-            is_harmonic = any(
-                any(abs(peak - h) < harmonic_tolerance for h in all_harmonics)
-                for peak in peak_frequencies if peak > 0
+            # Use the global method to check for harmonics
+            is_harmonic = is_harmonic_frequency(
+                peak_frequencies=peak_frequencies,
+                freq1=gif_frequency1,
+                freq2=gif_frequency2,
+                harmonic_type=HarmonicType.ANY,
+                tolerance=harmonic_tolerance
             )
 
             if not is_harmonic:
@@ -97,7 +94,8 @@ def plot_and_save_spectrums(fourier_transformed_activations, output_dir, fps, do
                 plt.ylabel('Magnitude')
                 plt.legend()
                 # Add ticks at the target frequency and its harmonics
-                harmonic_ticks1 = [n * gif_frequency1 for n in range(-2, 3)]
+                # Note: main.py still shows negative frequencies unlike run-single.py
+                harmonic_ticks1 = [n * gif_frequency1 for n in range(-2,3)]
                 harmonic_ticks2 = [n * gif_frequency2 for n in range(-2, 3)]
                 for tick in harmonic_ticks1:
                     plt.axvline(x=tick, color='r', linestyle='--', linewidth=0.5, label='f1 harmonic' if tick == gif_frequency1 else "")
@@ -173,7 +171,7 @@ for image_file in image_files:
         # Check if activations directory exists
         if not os.path.exists(activations_output_dir):
             # Perform activations for each color format
-      
+
             activations = perform_activations(activation_model, frames, preprocess_seqn)
             # save_activations(activations=activations, output_dir=activations_output_dir)
             # print(f"Activations saved in '{activations_output_dir}' directory.")
@@ -200,48 +198,3 @@ for image_file in image_files:
         # plot_and_save_spectrums(fourier_transformed_activations, spectrum_output_dir, fps=24, dominant_frequencies=dominant_frequencies_2n, gif_frequency1=5,gif_frequency2=6)
         # print(f"Spectrums plotted and saved in '{spectrum_output_dir}' directory.")
 
-# After processing all images, run the filter scoring analysis
-print("\n" + "="*50)
-print("Running filter scoring analysis...")
-print("="*50)
-
-# File paths for the different detection methods
-files = {
-    
-    '2N': output_csv_path_2n,
-   
-}
-
-# Create results directory
-os.makedirs('filter_scoring', exist_ok=True)
-
-# Load data
-print("Loading filter data...")
-df = filter_scoring.load_filter_data(files)
-
-if df.empty:
-    print("No data found. Please check that the CSV files contain valid data.")
-    exit(1)
-
-# Calculate metrics
-print("Calculating filter metrics...")
-metrics_df = filter_scoring.calculate_filter_metrics(df)
-
-# Score filters
-print("Scoring filters...")
-scored_filters = filter_scoring.score_filters(metrics_df)
-
-# Identify filters to prune
-print("Identifying filters to prune...")
-filters_to_keep, filters_to_prune = filter_scoring.identify_filters_to_prune(scored_filters, keep_percentage=0.2)
-
-# Plot results
-print("Plotting results...")
-filter_scoring.plot_filter_scores(scored_filters, output_file='filter_scoring/filter_scores.png')
-
-# Save results
-filter_scoring.save_filter_scores(scored_filters, output_file='filter_scoring/filter_scores.csv')
-filter_scoring.save_pruning_results(filters_to_keep, filters_to_prune, output_file='filter_scoring/pruning_results.txt')
-
-print(f"\nAnalysis complete. Results saved to 'filter_scoring/' directory.")
-print(f"Found {len(filters_to_keep)} filters to keep and {len(filters_to_prune)} filters to prune.")

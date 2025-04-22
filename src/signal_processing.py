@@ -2,13 +2,69 @@ import numpy as np
 from numpy.fft import fft
 import os
 import csv
+from enum import Enum
+
+class HarmonicType(Enum):
+    """Enum for different types of harmonic checks"""
+    ANY = 0       # Check if frequency is a harmonic of any base frequency
+    FREQ1 = 1     # Check if frequency is a harmonic of frequency 1
+    FREQ2 = 2     # Check if frequency is a harmonic of frequency 2
+    INTERMOD = 3  # Check if frequency is an intermodulation product
+
+def is_harmonic_frequency(peak_frequencies, freq1, freq2, harmonic_type=HarmonicType.ANY, tolerance=0.1, max_harmonic=12, max_intermod_order=5):
+    """
+    Checks if any of the peak frequencies is a harmonic of the base frequencies.
+
+    Args:
+        peak_frequencies: List of frequencies to check
+        freq1: First base frequency
+        freq2: Second base frequency
+        harmonic_type: Type of harmonic check to perform (from HarmonicType enum)
+        tolerance: Tolerance for frequency matching
+        max_harmonic: Maximum harmonic order to check
+        max_intermod_order: Maximum intermodulation order to check
+
+    Returns:
+        bool: True if any peak is a harmonic according to the specified type, False otherwise
+    """
+    # Generate harmonics for frequency 1
+    harmonics_freq1 = [n * freq1 for n in range(1, max_harmonic)]
+
+    # Generate harmonics for frequency 2
+    harmonics_freq2 = [n * freq2 for n in range(1, max_harmonic)]
+
+    # Combine harmonics for ANY check
+    all_harmonics = harmonics_freq1 + harmonics_freq2
+
+    # Generate intermodulation products if needed
+    intermod_freqs = []
+    if harmonic_type == HarmonicType.INTERMOD:
+        for i in range(1, max_intermod_order + 1):
+            for j in range(1, max_intermod_order + 1):
+                intermod_freqs.append(abs(i * freq1 + j * freq2))
+                intermod_freqs.append(abs(i * freq1 - j * freq2))
+
+    # Select the appropriate set of frequencies to check against
+    check_freqs = {
+        HarmonicType.ANY: all_harmonics,
+        HarmonicType.FREQ1: harmonics_freq1,
+        HarmonicType.FREQ2: harmonics_freq2,
+        HarmonicType.INTERMOD: intermod_freqs
+    }[harmonic_type]
+
+    # Check if any peak is a harmonic (ignoring zeros/negatives)
+    return any(
+        any(abs(peak - h) < tolerance for h in check_freqs)
+        for peak in peak_frequencies if peak > 0
+    )
 
 def perform_fourier_transform(activations, reduction_method='mean'):
     """
     Performs FFT on activation time series for each layer and filter.
     Args:
         activations: {layer_id: [frame1_tensor(1,filters,height,width), frame2_tensor...]}
-        reduction_method: Method to reduce spatial dimensions ('mean', 'sum', 'max', 'min', 'median')
+        reduction_method: Method to reduce spatial dimensions ('mean', 'sum', 'max', 'min', 'median', 'std', 'power')
+                         'power' calculates mean squared value and may provide better frequency detection
     Returns:
         {layer_id: numpy_array(num_filters, fft_length)}
     """
@@ -18,11 +74,13 @@ def perform_fourier_transform(activations, reduction_method='mean'):
         'max': np.max,
         'min': np.min,
         'median': np.median,
-        'std': np.std
+        'std': np.std,
+        'power': lambda x: np.mean(x**2)  # Mean squared value (power)
     }
 
     if reduction_method not in reduction_methods:
-        raise ValueError(f"Invalid reduction method: {reduction_method}. Choose from 'mean', 'sum', 'max', 'min', 'median'.")#try l2, better csv plots,
+        valid_methods = "', '".join(reduction_methods.keys())
+        raise ValueError(f"Invalid reduction method: {reduction_method}. Choose from '{valid_methods}'.")  # Lists all available methods
 
     reduce_fn = reduction_methods[reduction_method]
 
@@ -174,31 +232,32 @@ def find_dominant_frequencies(fourier_transformed_activations, fps, threshold_fa
 
         for filter_id in range(num_filters):
             fft_vals = layer_fft[filter_id]
-            magnitudes = np.fft.fftshift(np.abs(fft_vals))
+            magnitudes = np.abs(fft_vals)
 
-            # Remove DC component explicitly (center of fftshifted array)
-            center = fft_length // 2
-            magnitudes[center] = 0
+            # Get only positive frequencies (excluding DC component)
+            positive_mask = freqs > 0
+            positive_freqs = freqs[positive_mask]
+            positive_magnitudes = magnitudes[positive_mask]
 
             if method == 'two_neighbours':
-                peak_indices = find_peaks_two_neighbours(magnitudes, threshold_factor)
+                peak_indices = find_peaks_two_neighbours(positive_magnitudes, threshold_factor)
             elif method == 'four_neighbours':
-                peak_indices = find_peaks_four_neighbours(magnitudes, threshold_factor)
+                peak_indices = find_peaks_four_neighbours(positive_magnitudes, threshold_factor)
             elif method == 'snr':
-                peak_indices = find_peaks_snr(magnitudes, min_snr)
+                peak_indices = find_peaks_snr(positive_magnitudes, min_snr)
             else:
                 # Default to two neighbours method
-                peak_indices = find_peaks_two_neighbours(magnitudes, threshold_factor)
+                peak_indices = find_peaks_two_neighbours(positive_magnitudes, threshold_factor)
 
             top_frequencies = []
             if len(peak_indices) > 0:
                 # Sort peaks by magnitude (highest first)
-                sorted_peaks = sorted(peak_indices, key=lambda idx: magnitudes[idx], reverse=True)
+                sorted_peaks = sorted(peak_indices, key=lambda idx: positive_magnitudes[idx], reverse=True)
 
                 # Take the top peaks (up to num_peaks)
                 for i in range(min(num_peaks, len(sorted_peaks))):
                     peak_idx = sorted_peaks[i]
-                    freq = abs(freqs[peak_idx])
+                    freq = positive_freqs[peak_idx]  # Already positive, no need for abs()
                     top_frequencies.append(freq)
             else:
                 # No peaks found, append NaN or zero
@@ -216,6 +275,7 @@ def find_dominant_frequencies(fourier_transformed_activations, fps, threshold_fa
 def save_dominant_frequencies_to_csv(dominant_frequencies, output_csv_path, image_path, gif_frequency1, gif_frequency2):
     """
     Saves dominant frequencies to CSV file, handling multiple peaks per filter.
+    This function appends data to the CSV file, creating a new file if it doesn't exist.
     """
     file_exists = os.path.exists(output_csv_path)
     with open(output_csv_path, mode='a', newline='') as csv_file:
@@ -240,20 +300,18 @@ def save_dominant_frequencies_to_csv(dominant_frequencies, output_csv_path, imag
             for filter_id in sorted(filters.keys()):
                 peak_frequencies = filters[filter_id]  # List of top frequencies
 
-                # Generate harmonics for both frequencies
-                harmonics_freq1 = [n * gif_frequency1 for n in range(1, 11)]
-                harmonics_freq2 = [n * gif_frequency2 for n in range(1, 11)]
-                all_harmonics = harmonics_freq1 + harmonics_freq2
-
-                # Check if any peak is a harmonic (ignoring zeros)
-                is_harmonic = any(
-                    any(abs(peak - h) < harmonic_tolerance for h in all_harmonics)
-                    for peak in peak_frequencies if peak > 0
+                # Check if any peak is a harmonic using the global method
+                is_harmonic = is_harmonic_frequency(
+                    peak_frequencies=peak_frequencies,
+                    freq1=gif_frequency1,
+                    freq2=gif_frequency2,
+                    harmonic_type=HarmonicType.ANY,
+                    tolerance=harmonic_tolerance
                 )
 
                 flag = "Same" if is_harmonic else "Different"
 
-                
+
                 # Format row data
                 row = [image_path, layer_id, filter_id]
                 # Add all peak frequencies with formatting
@@ -261,3 +319,108 @@ def save_dominant_frequencies_to_csv(dominant_frequencies, output_csv_path, imag
                     row.append(f"{peak:.10f}" if peak > 0 else np.nan)
                 row.extend([gif_frequency1, gif_frequency2, flag])
                 writer.writerow(row)
+
+def update_dominant_frequencies_csv(dominant_frequencies, output_csv_path, image_path, gif_frequency1, gif_frequency2):
+    """
+    Updates a single CSV file with dominant frequencies across multiple images.
+    This function maintains a single CSV file across multiple images, avoiding duplicates.
+
+    Args:
+        dominant_frequencies: Dictionary of dominant frequencies {layer_id: {filter_id: [frequencies]}}
+        output_csv_path: Path to the CSV file to update
+        image_path: Path to the current image being processed
+        gif_frequency1: First GIF frequency
+        gif_frequency2: Second GIF frequency
+    """
+    # Check if file exists and read existing data
+    existing_data = {}
+    file_exists = os.path.exists(output_csv_path)
+
+    if file_exists:
+        try:
+            with open(output_csv_path, mode='r', newline='') as csv_file:
+                reader = csv.reader(csv_file)
+                # Skip empty rows and find the header row
+                header = None
+                for row in reader:
+                    if not row:  # Skip empty rows
+                        continue
+                    if "Image" in row and "Layer ID" in row and "Filter ID" in row and "Flag" in row:
+                        header = row
+                        break
+
+                if header:
+                    # Get column indices
+                    layer_idx = header.index("Layer ID")
+                    filter_idx = header.index("Filter ID")
+
+                    # Read existing data
+                    for row in reader:
+                        if not row:  # Skip empty rows
+                            continue
+
+                        # Create a unique key for each layer_id, filter_id combination
+                        key = (row[layer_idx], row[filter_idx])
+
+                        # Store the existing data
+                        if key not in existing_data:
+                            existing_data[key] = []
+                        existing_data[key].append(row)
+        except Exception as e:
+            print(f"Error reading existing CSV file: {e}")
+            # If there's an error reading the file, we'll create a new one
+            file_exists = False
+
+    # Prepare new data
+    new_data = []
+
+    # Set harmonic detection parameters
+    harmonic_tolerance = 1
+
+    for layer_id in sorted(dominant_frequencies.keys()):
+        filters = dominant_frequencies[layer_id]
+        for filter_id in sorted(filters.keys()):
+            peak_frequencies = filters[filter_id]  # List of top frequencies
+
+            # Check if any peak is a harmonic using the global method
+            is_harmonic = is_harmonic_frequency(
+                peak_frequencies=peak_frequencies,
+                freq1=gif_frequency1,
+                freq2=gif_frequency2,
+                harmonic_type=HarmonicType.ANY,
+                tolerance=harmonic_tolerance
+            )
+
+            flag = "Same" if is_harmonic else "Different"
+
+            # Format row data
+            row = [image_path, layer_id, filter_id]
+            # Add all peak frequencies with formatting
+            for peak in peak_frequencies:
+                row.append(f"{peak:.10f}" if peak > 0 else np.nan)
+            row.extend([gif_frequency1, gif_frequency2, flag])
+
+            # Add to new data
+            new_data.append(row)
+
+    # Write the updated data to the CSV file
+    with open(output_csv_path, mode='w', newline='') as csv_file:
+        writer = csv.writer(csv_file)
+
+        # Write header
+        header = ["Image", "Layer ID", "Filter ID"]
+        # Add column for each peak
+        num_peaks = 3
+        for i in range(num_peaks):
+            header.append(f"Peak {i+1} Freq")
+        header.extend(["GIF Frequency 1", "GIF Frequency 2", "Flag"])
+        writer.writerow(header)
+
+        # Write existing data (if any)
+        for key, rows in existing_data.items():
+            for row in rows:
+                writer.writerow(row)
+
+        # Write new data
+        for row in new_data:
+            writer.writerow(row)

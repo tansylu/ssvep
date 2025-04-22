@@ -3,11 +3,13 @@ vgg16_weights_tf_dim_ordering_tf_kernels.h5
 
 # Ignore Visual Studio Code settings
 .vscode/
-
+*.csv
 imgs/
 #ignore the pictures folder
 spectr*/
-
+run*/
+activation*/
+frames*/
 imgs/*
 results/
 activations_output/

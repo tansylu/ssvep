@@ -3,6 +3,7 @@ from numpy.fft import fft
 import os
 import csv
 from enum import Enum
+import db  # Import our database module
 
 class HarmonicType(Enum):
     """Enum for different types of harmonic checks"""
@@ -424,3 +425,43 @@ def update_dominant_frequencies_csv(dominant_frequencies, output_csv_path, image
         # Write new data
         for row in new_data:
             writer.writerow(row)
+
+def save_fft_results_to_db(image_path, fourier_transformed_activations, dominant_frequencies, color_format, fps, reduction_method, gif_frequency1=None, gif_frequency2=None):
+    """
+    Save FFT results to the database.
+
+    Args:
+        image_path (str): Path to the image file
+        fourier_transformed_activations (dict): Dictionary of FFT results
+            {layer_id: numpy_array(num_filters, fft_length)}
+        dominant_frequencies (dict): Dictionary of dominant frequencies
+            {layer_id: {filter_id: [frequencies]}}
+        color_format (str): The color format used (e.g., 'RGB', 'HSV')
+        fps (float): Frames per second
+        reduction_method (str): Method used to reduce spatial dimensions
+        gif_frequency1 (float, optional): First GIF frequency
+        gif_frequency2 (float, optional): Second GIF frequency
+    """
+    # Initialize the database if it doesn't exist
+    db.init_db()
+
+    # Get or create the image record
+    image_id = db.get_or_create_image(image_path)
+
+    # Create a new run record
+    run_id = db.create_run(
+        image_id=image_id,
+        color_format=color_format,
+        fps=fps,
+        reduction_method=reduction_method,
+        gif_frequency1=gif_frequency1,
+        gif_frequency2=gif_frequency2
+    )
+
+    # Save the FFT results
+    db.save_fft_results(run_id, fourier_transformed_activations)
+
+    # Save the dominant frequencies
+    db.save_dominant_frequencies(run_id, dominant_frequencies, gif_frequency1, gif_frequency2)
+
+    return run_id

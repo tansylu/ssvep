@@ -42,6 +42,11 @@ Thumbs.db
 # Ignore logs
 *.log
 
+# Ignore database files
+*.db
+*.sqlite
+*.sqlite3
+
 # Ignore compiled files
 *.so
 *.o

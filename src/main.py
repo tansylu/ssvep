@@ -5,7 +5,8 @@ import torch
 import torchvision.transforms as transforms
 from flicker_image import flicker_image_hh_and_save_gif #,flicker_image_and_save_gif  // if we want to flicker the image as whole
 from model import  get_activations, load_activations, init_model
-from signal_processing import perform_fourier_transform, find_dominant_frequencies, is_harmonic_frequency, HarmonicType, save_fft_results_to_db
+from signal_processing import perform_fourier_transform, find_dominant_frequencies, save_fft_results_to_db, is_harmonic_frequency, HarmonicType
+from frequency_similarity import calculate_frequency_similarity_score
 from PIL import Image
 import numpy as np
 import matplotlib.pyplot as plt
@@ -51,16 +52,15 @@ def save_filter_stats_to_csv(filter_stats_table, csv_file_path, image_file=None,
             try:
                 next(reader)  # Skip header row
                 for row in reader:
-                    if len(row) >= 6:  # Ensure row has enough columns
+                    if len(row) >= 5:  # Ensure row has enough columns
                         layer_id, filter_id = row[0], row[1]
                         key = (layer_id, filter_id)
                         csv_data[key] = {
                             'layer': layer_id,
                             'filter': filter_id,
-                            'different': int(row[2]),
-                            'same': int(row[3]),
-                            'total': int(row[4]),
-                            'diff_percent': float(row[5])
+                            'total_similarity_score': float(row[2]),
+                            'total_images': int(row[3]),
+                            'avg_similarity_score': float(row[4])
                         }
             except StopIteration:
                 # File is empty or has only a header
@@ -68,38 +68,36 @@ def save_filter_stats_to_csv(filter_stats_table, csv_file_path, image_file=None,
 
     # Update with current data
     for (layer_id, filter_id), stats in filter_stats_table.items():
-        total = stats["total"]
-        if total > 0:
-            diff_percent = (stats["different"] / total) * 100
+        total_images = stats["total_images"]
+        if total_images > 0:
+            avg_similarity_score = stats["total_similarity_score"] / total_images
             key = (str(layer_id), str(filter_id))
             csv_data[key] = {
                 'layer': layer_id,
                 'filter': filter_id,
-                'different': stats["different"],
-                'same': stats["same"],
-                'total': total,
-                'diff_percent': diff_percent
+                'total_similarity_score': stats["total_similarity_score"],
+                'total_images': total_images,
+                'avg_similarity_score': avg_similarity_score
             }
 
-    # Sort by difference percentage
-    sorted_data = sorted(csv_data.values(), key=lambda x: x['diff_percent'], reverse=True)
+    # Sort by average similarity score (higher means more similar to expected frequencies)
+    sorted_data = sorted(csv_data.values(), key=lambda x: x['avg_similarity_score'], reverse=True)
 
     # Write to CSV
     with open(csv_file_path, 'w', newline='') as csvfile:
         writer = csv.writer(csvfile)
 
         # Write header
-        writer.writerow(["Layer", "Filter", "Different", "Same", "Total", "Diff %"])
+        writer.writerow(["Layer", "Filter", "Total Similarity Score", "Total Images", "Avg Similarity Score"])
 
         # Write data
         for item in sorted_data:
             writer.writerow([
                 item['layer'],
                 item['filter'],
-                item['different'],
-                item['same'],
-                item['total'],
-                f"{item['diff_percent']:.2f}"
+                f"{item['total_similarity_score']:.4f}",
+                item['total_images'],
+                f"{item['avg_similarity_score']:.4f}"
             ])
 
 def load_frames(frames_dir):
@@ -123,7 +121,7 @@ preprocess_seqn = transforms.Compose([
     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
 ])
 
-images_folder = "imgs_100"
+images_folder = "imgs"
 
 # List all image files (adjust extensions as needed)
 image_files = [f for f in os.listdir(images_folder) if f.lower().endswith(('.jpg', '.jpeg', '.png'))]
@@ -342,28 +340,38 @@ for image_file in image_files:
             for filter_id in dominant_frequencies_2n[layer_id]:
                 peak_frequencies = dominant_frequencies_2n[layer_id][filter_id]
 
-                is_harmonic = is_harmonic_frequency(
-                    peak_frequencies=peak_frequencies,
-                    freq1=5,
-                    freq2=6,
-                    harmonic_type=HarmonicType.ANY,
-                    tolerance=0.1
+                # Get the full FFT data for this filter
+                fft_vals = fourier_transformed_activations[layer_id][filter_id]
+                magnitudes = np.abs(fft_vals)
+
+                # Generate frequency bins
+                fft_length = len(magnitudes)
+                freqs = np.fft.fftfreq(fft_length, d=1/fps)
+
+                # Get only positive frequencies
+                positive_mask = freqs > 0
+                positive_freqs = freqs[positive_mask]
+                positive_magnitudes = magnitudes[positive_mask]
+
+                # Calculate similarity score using the full spectrum
+                similarity_score, _ = calculate_frequency_similarity_score(
+                    frequencies=positive_freqs,
+                    magnitudes=positive_magnitudes,
+                    target_freq1=gif_frequency1,
+                    target_freq2=gif_frequency2,
+                    tolerance=0.5  # Use a more reasonable tolerance
                 )
 
                 filter_key = (layer_id, filter_id)
                 if filter_key not in filter_stats_table:
                     filter_stats_table[filter_key] = {
-                        "different": 0,
-                        "same": 0,
-                        "total": 0
+                        "total_similarity_score": 0.0,
+                        "total_images": 0
                     }
 
-                if is_harmonic:
-                    filter_stats_table[filter_key]["same"] += 1
-                else:
-                    filter_stats_table[filter_key]["different"] += 1
-
-                filter_stats_table[filter_key]["total"] = filter_stats_table[filter_key]["different"] + filter_stats_table[filter_key]["same"]
+                # Add the similarity score to the total
+                filter_stats_table[filter_key]["total_similarity_score"] += similarity_score
+                filter_stats_table[filter_key]["total_images"] += 1
 
         # Save filter statistics to CSV file after each image
         save_filter_stats_to_csv(filter_stats_table, csv_stats_file, image_file, args.db_only)

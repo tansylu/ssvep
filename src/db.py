@@ -91,8 +91,8 @@ def init_db():
         peak1_freq REAL,
         peak2_freq REAL,
         peak3_freq REAL,
-        is_harmonic BOOLEAN NOT NULL,
-        harmonic_type TEXT,
+        similarity_score REAL,
+        similarity_category TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (run_id) REFERENCES runs (id) ON DELETE CASCADE,
         UNIQUE (run_id, layer_id, filter_id)
@@ -214,7 +214,7 @@ def save_dominant_frequencies(run_id, dominant_frequencies, gif_frequency1=None,
         gif_frequency1 (float, optional): First GIF frequency
         gif_frequency2 (float, optional): Second GIF frequency
     """
-    from signal_processing import is_harmonic_frequency, HarmonicType
+    from frequency_similarity import calculate_frequency_similarity_score, get_similarity_category
 
     conn = get_connection()
     cursor = conn.cursor()
@@ -227,58 +227,47 @@ def save_dominant_frequencies(run_id, dominant_frequencies, gif_frequency1=None,
         for filter_id in filters:
             peak_frequencies = filters[filter_id]  # List of top frequencies
 
-            # Check if any peak is a harmonic
-            is_harmonic = False
-            harmonic_type = None
+            # Calculate similarity score
+            similarity_score = 0.0
+            similarity_category = "Very Different"
 
             if gif_frequency1 is not None and gif_frequency2 is not None:
-                # Check for ANY harmonic
-                is_harmonic_any = is_harmonic_frequency(
-                    peak_frequencies=peak_frequencies,
-                    freq1=gif_frequency1,
-                    freq2=gif_frequency2,
-                    harmonic_type=HarmonicType.ANY,
-                    tolerance=HARMONIC_TOLERANCE
-                )
+                # Try to get the full FFT data for this filter
+                fft_data = get_fft_data(run_id, layer_id, filter_id)
 
-                # Check for FREQ1 harmonic
-                is_harmonic_freq1 = is_harmonic_frequency(
-                    peak_frequencies=peak_frequencies,
-                    freq1=gif_frequency1,
-                    freq2=gif_frequency2,
-                    harmonic_type=HarmonicType.FREQ1,
-                    tolerance=HARMONIC_TOLERANCE
-                )
+                if fft_data is not None:
+                    # Get run information for FPS
+                    cursor.execute(
+                        "SELECT fps FROM runs WHERE id = ?",
+                        (run_id,)
+                    )
+                    run_info = cursor.fetchone()
+                    fps = run_info['fps'] if run_info else 30  # Default to 30 fps
 
-                # Check for FREQ2 harmonic
-                is_harmonic_freq2 = is_harmonic_frequency(
-                    peak_frequencies=peak_frequencies,
-                    freq1=gif_frequency1,
-                    freq2=gif_frequency2,
-                    harmonic_type=HarmonicType.FREQ2,
-                    tolerance=HARMONIC_TOLERANCE
-                )
+                    # Generate frequency bins
+                    freqs = np.fft.fftfreq(len(fft_data), d=1/fps)
 
-                # Check for INTERMOD harmonic
-                is_harmonic_intermod = is_harmonic_frequency(
-                    peak_frequencies=peak_frequencies,
-                    freq1=gif_frequency1,
-                    freq2=gif_frequency2,
-                    harmonic_type=HarmonicType.INTERMOD,
-                    tolerance=HARMONIC_TOLERANCE
-                )
+                    # Get magnitudes of the FFT data
+                    magnitudes = np.abs(fft_data)
 
-                is_harmonic = is_harmonic_any
+                    # Get only positive frequencies
+                    positive_mask = freqs > 0
+                    positive_freqs = freqs[positive_mask]
+                    positive_magnitudes = magnitudes[positive_mask]
 
-                # Determine the harmonic type
-                if is_harmonic_freq1 and not is_harmonic_freq2 and not is_harmonic_intermod:
-                    harmonic_type = "FREQ1"
-                elif is_harmonic_freq2 and not is_harmonic_freq1 and not is_harmonic_intermod:
-                    harmonic_type = "FREQ2"
-                elif is_harmonic_intermod and not is_harmonic_freq1 and not is_harmonic_freq2:
-                    harmonic_type = "INTERMOD"
-                elif is_harmonic_any:
-                    harmonic_type = "MULTIPLE"
+                    # Calculate similarity using the full spectrum
+                    similarity_score, _ = calculate_frequency_similarity_score(
+                        frequencies=positive_freqs,
+                        magnitudes=positive_magnitudes,
+                        target_freq1=gif_frequency1,
+                        target_freq2=gif_frequency2,
+                        tolerance=HARMONIC_TOLERANCE
+                    )
+                else:
+                    # If FFT data is not available, we can't calculate similarity
+                    similarity_score = 0.0
+
+                similarity_category = get_similarity_category(similarity_score)
 
             # Ensure we have exactly 3 peaks (pad with None if needed)
             while len(peak_frequencies) < 3:
@@ -290,9 +279,9 @@ def save_dominant_frequencies(run_id, dominant_frequencies, gif_frequency1=None,
             # Insert or replace the dominant frequencies
             cursor.execute(
                 "INSERT OR REPLACE INTO dominant_frequencies "
-                "(run_id, layer_id, filter_id, peak1_freq, peak2_freq, peak3_freq, is_harmonic, harmonic_type) "
+                "(run_id, layer_id, filter_id, peak1_freq, peak2_freq, peak3_freq, similarity_score, similarity_category) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                (run_id, layer_id, filter_id, peak1, peak2, peak3, is_harmonic, harmonic_type)
+                (run_id, layer_id, filter_id, peak1, peak2, peak3, similarity_score, similarity_category)
             )
 
     conn.commit()
@@ -442,11 +431,16 @@ def export_to_csv(run_id, output_path):
         writer.writerow([
             "Image", "Layer ID", "Filter ID",
             "Peak 1 Freq", "Peak 2 Freq", "Peak 3 Freq",
-            "GIF Frequency 1", "GIF Frequency 2", "Flag"
+            "GIF Frequency 1", "GIF Frequency 2",
+            "Similarity Score", "Similarity Category"
         ])
 
         # Write data
         for freq in frequencies:
+            # Check if similarity_score exists in the record
+            similarity_score = freq.get('similarity_score', 0.0)
+            similarity_category = freq.get('similarity_category', 'Very Different')
+
             writer.writerow([
                 run['image_path'],
                 freq['layer_id'],
@@ -456,5 +450,6 @@ def export_to_csv(run_id, output_path):
                 freq['peak3_freq'],
                 run['gif_frequency1'],
                 run['gif_frequency2'],
-                "Same" if freq['is_harmonic'] else "Different"
+                f"{similarity_score:.4f}" if similarity_score is not None else "0.0000",
+                similarity_category if similarity_category is not None else "Very Different"
             ])

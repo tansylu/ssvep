@@ -4,6 +4,7 @@ import os
 import csv
 from enum import Enum
 import db  # Import our database module
+from frequency_similarity import calculate_frequency_similarity_score, get_similarity_category
 
 class HarmonicType(Enum):
     """Enum for different types of harmonic checks"""
@@ -273,7 +274,7 @@ def find_dominant_frequencies(fourier_transformed_activations, fps, threshold_fa
 
     return dominant_frequencies
 
-def save_dominant_frequencies_to_csv(dominant_frequencies, output_csv_path, image_path, gif_frequency1, gif_frequency2):
+def save_dominant_frequencies_to_csv(dominant_frequencies, fourier_transformed_activations, output_csv_path, image_path, gif_frequency1, gif_frequency2, fps=30):
     """
     Saves dominant frequencies to CSV file, handling multiple peaks per filter.
     This function appends data to the CSV file, creating a new file if it doesn't exist.
@@ -290,7 +291,7 @@ def save_dominant_frequencies_to_csv(dominant_frequencies, output_csv_path, imag
             num_peaks = 3
             for i in range(num_peaks):
                 header.append(f"Peak {i+1} Freq")
-            header.extend(["GIF Frequency 1", "GIF Frequency 2", "Flag"])
+            header.extend(["GIF Frequency 1", "GIF Frequency 2", "Similarity Score", "Similarity Category"])
             writer.writerow(header)
 
         # Set harmonic detection parameters
@@ -301,27 +302,40 @@ def save_dominant_frequencies_to_csv(dominant_frequencies, output_csv_path, imag
             for filter_id in sorted(filters.keys()):
                 peak_frequencies = filters[filter_id]  # List of top frequencies
 
-                # Check if any peak is a harmonic using the global method
-                is_harmonic = is_harmonic_frequency(
-                    peak_frequencies=peak_frequencies,
-                    freq1=gif_frequency1,
-                    freq2=gif_frequency2,
-                    harmonic_type=HarmonicType.ANY,
+                # Get the full FFT data for this filter
+                fft_vals = fourier_transformed_activations[layer_id][filter_id]
+                magnitudes = np.abs(fft_vals)
+
+                # Generate frequency bins
+                fft_length = len(magnitudes)
+                freqs = np.fft.fftfreq(fft_length, d=1/fps)
+
+                # Get only positive frequencies
+                positive_mask = freqs > 0
+                positive_freqs = freqs[positive_mask]
+                positive_magnitudes = magnitudes[positive_mask]
+
+                # Calculate similarity score using the full spectrum
+                similarity_score, details = calculate_frequency_similarity_score(
+                    frequencies=positive_freqs,
+                    magnitudes=positive_magnitudes,
+                    target_freq1=gif_frequency1,
+                    target_freq2=gif_frequency2,
                     tolerance=harmonic_tolerance
                 )
 
-                flag = "Same" if is_harmonic else "Different"
-
+                # Get similarity category
+                similarity_category = get_similarity_category(similarity_score)
 
                 # Format row data
                 row = [image_path, layer_id, filter_id]
                 # Add all peak frequencies with formatting
                 for peak in peak_frequencies:
                     row.append(f"{peak:.10f}" if peak > 0 else np.nan)
-                row.extend([gif_frequency1, gif_frequency2, flag])
+                row.extend([gif_frequency1, gif_frequency2, f"{similarity_score:.4f}", similarity_category])
                 writer.writerow(row)
 
-def update_dominant_frequencies_csv(dominant_frequencies, output_csv_path, image_path, gif_frequency1, gif_frequency2):
+def update_dominant_frequencies_csv(dominant_frequencies, fourier_transformed_activations, output_csv_path, image_path, gif_frequency1, gif_frequency2, fps=30):
     """
     Updates a single CSV file with dominant frequencies across multiple images.
     This function maintains a single CSV file across multiple images, avoiding duplicates.
@@ -346,7 +360,7 @@ def update_dominant_frequencies_csv(dominant_frequencies, output_csv_path, image
                 for row in reader:
                     if not row:  # Skip empty rows
                         continue
-                    if "Image" in row and "Layer ID" in row and "Filter ID" in row and "Flag" in row:
+                    if "Image" in row and "Layer ID" in row and "Filter ID" in row:
                         header = row
                         break
 
@@ -383,23 +397,37 @@ def update_dominant_frequencies_csv(dominant_frequencies, output_csv_path, image
         for filter_id in sorted(filters.keys()):
             peak_frequencies = filters[filter_id]  # List of top frequencies
 
-            # Check if any peak is a harmonic using the global method
-            is_harmonic = is_harmonic_frequency(
-                peak_frequencies=peak_frequencies,
-                freq1=gif_frequency1,
-                freq2=gif_frequency2,
-                harmonic_type=HarmonicType.ANY,
+            # Get the full FFT data for this filter
+            fft_vals = fourier_transformed_activations[layer_id][filter_id]
+            magnitudes = np.abs(fft_vals)
+
+            # Generate frequency bins
+            fft_length = len(magnitudes)
+            freqs = np.fft.fftfreq(fft_length, d=1/fps)
+
+            # Get only positive frequencies
+            positive_mask = freqs > 0
+            positive_freqs = freqs[positive_mask]
+            positive_magnitudes = magnitudes[positive_mask]
+
+            # Calculate similarity score using the full spectrum
+            similarity_score, _ = calculate_frequency_similarity_score(
+                frequencies=positive_freqs,
+                magnitudes=positive_magnitudes,
+                target_freq1=gif_frequency1,
+                target_freq2=gif_frequency2,
                 tolerance=harmonic_tolerance
             )
 
-            flag = "Same" if is_harmonic else "Different"
+            # Get similarity category
+            similarity_category = get_similarity_category(similarity_score)
 
             # Format row data
             row = [image_path, layer_id, filter_id]
             # Add all peak frequencies with formatting
             for peak in peak_frequencies:
                 row.append(f"{peak:.10f}" if peak > 0 else np.nan)
-            row.extend([gif_frequency1, gif_frequency2, flag])
+            row.extend([gif_frequency1, gif_frequency2, f"{similarity_score:.4f}", similarity_category])
 
             # Add to new data
             new_data.append(row)
@@ -414,12 +442,17 @@ def update_dominant_frequencies_csv(dominant_frequencies, output_csv_path, image
         num_peaks = 3
         for i in range(num_peaks):
             header.append(f"Peak {i+1} Freq")
-        header.extend(["GIF Frequency 1", "GIF Frequency 2", "Flag"])
+        header.extend(["GIF Frequency 1", "GIF Frequency 2", "Similarity Score", "Similarity Category"])
         writer.writerow(header)
 
         # Write existing data (if any)
         for key, rows in existing_data.items():
             for row in rows:
+                # Check if the existing row has similarity score and category
+                # If not, add default values to maintain compatibility
+                if len(row) < len(header):
+                    # Add default similarity score and category
+                    row.extend(["0.0000", "Very Different"])
                 writer.writerow(row)
 
         # Write new data

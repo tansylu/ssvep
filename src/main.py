@@ -3,10 +3,10 @@ import os
 from random import shuffle
 import torch
 import torchvision.transforms as transforms
-from flicker_image import flicker_image_hh_and_save_gif #,flicker_image_and_save_gif  // if we want to flicker the image as whole
-from model import  get_activations, load_activations, init_model
-from signal_processing import perform_fourier_transform, find_dominant_frequencies, save_fft_results_to_db, is_harmonic_frequency, HarmonicType
-from frequency_similarity import calculate_frequency_similarity_score
+from src.utils.flicker_image import flicker_image_hh_and_save_gif #,flicker_image_and_save_gif  // if we want to flicker the image as whole
+from src.core.model import get_activations, load_activations, init_model
+from src.core.signal_processing import perform_fourier_transform, find_dominant_frequencies, save_fft_results_to_db, is_harmonic_frequency, HarmonicType
+from src.analysis.frequency_similarity import calculate_frequency_similarity_score
 from PIL import Image
 import numpy as np
 import matplotlib.pyplot as plt
@@ -14,8 +14,8 @@ from numpy.fft import fft
 import csv
 import sys
 import argparse
-import db  # Import our database module
-import db_stats  # Import our database stats module
+from src.database import db  # Import our database module
+from src.database import db_stats  # Import our database stats module
 
 
 def save_frames(frames, frames_dir):
@@ -121,7 +121,7 @@ preprocess_seqn = transforms.Compose([
     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
 ])
 
-images_folder = "imgs"
+images_folder = "data/raw/imgs_100"
 
 # List all image files (adjust extensions as needed)
 image_files = [f for f in os.listdir(images_folder) if f.lower().endswith(('.jpg', '.jpeg', '.png'))]
@@ -254,13 +254,13 @@ timestamp_now = datetime.now().strftime("%Y%m%d_%H%M%S")
 
 # Initialize the stats table
 filter_stats_table = {}  # {(layer_id, filter_id): {"different": 0, "same": 0, "total": 0}}
-csv_stats_file = f'filter_stats_{timestamp_now}.csv'
+csv_stats_file = f'results/exports/filter_stats_{timestamp_now}.csv'
 
 # Initialize only once
 resnet18 = init_model()
 
 # Set a small limit for testing
-LIMIT = 100
+LIMIT = 10
 COUNTER = 0
 # shuffle the list of image files
 shuffle(image_files)
@@ -280,10 +280,10 @@ for image_file in image_files:
     for color_format, gif_path in gif_paths.items():
 
         # Generate unique paths for each image and color format.
-        gif_path_modified = f"{base_name}_{color_format.lower()}.gif"
-        frames_dir = f"frames_{base_name}_{color_format.lower()}"
-        activations_output_dir = f'activations_output_{base_name}_{color_format.lower()}'
-        plots_output_dir = f'plots_output_{base_name}_{color_format.lower()}'
+        gif_path_modified = f"results/exports/{base_name}_{color_format.lower()}.gif"
+        frames_dir = f"data/processed/frames_{base_name}_{color_format.lower()}"
+        activations_output_dir = f'data/processed/activations_{base_name}_{color_format.lower()}'
+        plots_output_dir = f'results/plots/{base_name}_{color_format.lower()}'
 
         if not os.path.exists(gif_path_modified):
             # #print(f"Generating flicker image and saving as GIF ({color_format})...")

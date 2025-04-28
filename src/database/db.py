@@ -11,7 +11,7 @@ import json
 from datetime import datetime
 
 # Database file path
-DB_FILE = 'fft_results.db'
+DB_FILE = 'data/fft_results.db'
 
 def get_connection():
     """
@@ -214,7 +214,7 @@ def save_dominant_frequencies(run_id, dominant_frequencies, gif_frequency1=None,
         gif_frequency1 (float, optional): First GIF frequency
         gif_frequency2 (float, optional): Second GIF frequency
     """
-    from frequency_similarity import calculate_frequency_similarity_score, get_similarity_category
+    from src.analysis.frequency_similarity import calculate_frequency_similarity_score, get_similarity_category
 
     conn = get_connection()
     cursor = conn.cursor()

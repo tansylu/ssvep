@@ -5,8 +5,8 @@ This script provides command-line functionality to query and export data from th
 
 import argparse
 import os
-import db
-import db_stats
+from src.database import db
+from src.database import db_stats
 import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np

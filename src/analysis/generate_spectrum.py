@@ -10,7 +10,7 @@ import os
 import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
-import db
+from src.database import db
 from datetime import datetime
 import imageio
 import tempfile
@@ -182,8 +182,8 @@ def plot_spectrum(run, layer_id, filter_id, output_dir=None, max_freq=35, auto_z
 
     # Always save the plot to a directory
     if output_dir is None:
-        # Default to 'spectrum_plots' directory if not specified
-        output_dir = 'spectrum_plots'
+        # Default to 'results/spectrums' directory if not specified
+        output_dir = 'results/spectrums'
 
     # Create a subdirectory for this specific filter and layer
     filter_layer_dir = os.path.join(output_dir, f"filter_{filter_id}_layer_{layer_id}")
@@ -322,8 +322,8 @@ def generate_spectrum_gif(runs, layer_id, filter_id, output_file=None, max_freq=
 
         # Create the output directory if it doesn't exist
         if output_file is None:
-            # Default to 'spectrum_plots' directory if not specified
-            output_dir = 'spectrum_plots'
+            # Default to 'results/spectrums' directory if not specified
+            output_dir = 'results/spectrums'
             # Create a subdirectory for this specific filter and layer
             filter_layer_dir = os.path.join(output_dir, f"filter_{filter_id}_layer_{layer_id}")
             os.makedirs(filter_layer_dir, exist_ok=True)

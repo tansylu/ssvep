@@ -6,11 +6,8 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import h5py
 
-# Add the src directory to the path so we can import from it
-sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
-
 # Import necessary modules
-import db
+from src.database import db
 
 def load_filter_stats(stats_file):
     """Load filter statistics from CSV file"""

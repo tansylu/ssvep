@@ -1,0 +1,41 @@
+project_root/
+├── src/
+│   ├── __init__.py
+│   ├── core/
+│   │   ├── __init__.py
+│   │   ├── model.py           # Neural network model functionality
+│   │   └── signal_processing.py
+│   ├── database/
+│   │   ├── __init__.py
+│   │   ├── db.py             # Core database operations
+│   │   ├── db_stats.py       # Database statistics
+│   │   └── query_db.py       # Database querying utilities
+│   ├── analysis/
+│   │   ├── __init__.py
+│   │   ├── frequency_similarity.py
+│   │   ├── analyze_similarity_scores.py
+│   │   └── generate_spectrum.py
+│   ├── utils/
+│   │   ├── __init__.py
+│   │   └── flicker_image.py
+│   └── main.py
+├── tests/
+│   ├── __init__.py
+│   ├── test_db.py
+│   └── test_signal_processing.py
+├── docs/
+│   ├── README.md
+│   ├── FFT_DATABASE_README.md
+│   ├── SPECTRUM_GENERATOR_README.md
+│   └── README_filter_pruning.md
+├── data/
+│   ├── raw/                  # Original images
+│   ├── processed/            # Processed frames and activations
+│   └── models/              # Saved model weights
+├── results/
+│   ├── spectrums/
+│   ├── plots/
+│   └── exports/
+├── requirements.txt
+├── .gitignore
+└── setup.py

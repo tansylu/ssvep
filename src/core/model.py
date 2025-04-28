@@ -11,13 +11,13 @@ import random
 
 def init_model():# use once to set weigths and load the model.
     # Load ResNet18 model
-    
+
     print("Loading ResNet18 model...")
     resnet18 = models.resnet18()
 
     # Define path to weights file
-    weights_path = 'resnet18.pth'
-    weights_only_path = 'resnet18_weights_only.pth'
+    weights_path = 'data/models/resnet18.pth'
+    weights_only_path = 'data/models/resnet18_weights_only.pth'
 
     # if not os.path.exists(weights_only_path):
     print(f"Loading model weights from {weights_path}...")

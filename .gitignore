@@ -7,8 +7,13 @@ vgg16_weights_tf_dim_ordering_tf_kernels.h5
 imgs/
 imgs*/
 #ignore the pictures folder
+filter_comparison/
 spectr*/
 run*/
+*.png
+*.jpg
+*.jpeg
+*.csv
 activation*/
 frames*/
 imgs/*

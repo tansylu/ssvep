@@ -7,7 +7,7 @@ import sys
 from collections import Counter
 
 # Check if CSV file exists
-csv_file = 'run1_dominant_frequencies.csv'
+csv_file = 'results/exports/run1_dominant_frequencies.csv'
 if not os.path.exists(csv_file):
     print(f"Error: CSV file '{csv_file}' not found.")
     sys.exit(1)
@@ -42,7 +42,7 @@ for category, count in category_counts.items():
     print(f"- {category}: {count} ({percent:.2f}%)")
 
 # Create a directory for the analysis results
-os.makedirs('analysis_results', exist_ok=True)
+os.makedirs('results/plots/analysis', exist_ok=True)
 
 # Analyze similarity scores by layer
 print("\nSimilarity Score by Layer:")
@@ -64,8 +64,8 @@ plt.title(f"Distribution of Similarity Scores by Layer for {os.path.basename(cur
 plt.xlabel('Layer ID')
 plt.ylabel('Similarity Score')
 plt.tight_layout()
-plt.savefig('analysis_results/similarity_scores_by_layer.png')
-print("\nSaved similarity score distribution plot to 'analysis_results/similarity_scores_by_layer.png'")
+plt.savefig('results/plots/analysis/similarity_scores_by_layer.png')
+print("\nSaved similarity score distribution plot to 'results/plots/analysis/similarity_scores_by_layer.png'")
 
 # Plot histogram of similarity scores
 plt.figure(figsize=(12, 6))
@@ -74,8 +74,8 @@ plt.title(f"Histogram of Similarity Scores for {os.path.basename(current_image)}
 plt.xlabel('Similarity Score')
 plt.ylabel('Count')
 plt.tight_layout()
-plt.savefig('analysis_results/similarity_scores_histogram.png')
-print("Saved similarity score histogram to 'analysis_results/similarity_scores_histogram.png'")
+plt.savefig('results/plots/analysis/similarity_scores_histogram.png')
+print("Saved similarity score histogram to 'results/plots/analysis/similarity_scores_histogram.png'")
 
 # Plot the top filters with highest similarity scores
 if len(top_similar_filters) > 0:
@@ -85,8 +85,8 @@ if len(top_similar_filters) > 0:
     plt.xlabel('Filter ID')
     plt.ylabel('Similarity Score')
     plt.tight_layout()
-    plt.savefig('analysis_results/top_similar_filters.png')
-    print("Saved top filters plot to 'analysis_results/top_similar_filters.png'")
+    plt.savefig('results/plots/analysis/top_similar_filters.png')
+    print("Saved top filters plot to 'results/plots/analysis/top_similar_filters.png'")
 
 # Plot heatmap of similarity scores by layer and filter (for top layers)
 top_layers = layer_similarity_scores.head(5).index.tolist()
@@ -113,7 +113,7 @@ if top_layers:
             plt.xlabel('Filter ID')
             plt.ylabel('Layer ID')
             plt.tight_layout()
-            plt.savefig(f'analysis_results/layer_{layer_id}_heatmap.png')
-            print(f"Saved heatmap for Layer {layer_id} to 'analysis_results/layer_{layer_id}_heatmap.png'")
+            plt.savefig(f'results/plots/analysis/layer_{layer_id}_heatmap.png')
+            print(f"Saved heatmap for Layer {layer_id} to 'results/plots/analysis/layer_{layer_id}_heatmap.png'")
 
 print("\nAnalysis complete!")

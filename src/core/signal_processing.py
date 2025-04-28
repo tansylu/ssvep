@@ -3,8 +3,8 @@ from numpy.fft import fft
 import os
 import csv
 from enum import Enum
-import db  # Import our database module
-from frequency_similarity import calculate_frequency_similarity_score, get_similarity_category
+from src.database import db  # Import our database module
+from src.analysis.frequency_similarity import calculate_frequency_similarity_score, get_similarity_category
 
 class HarmonicType(Enum):
     """Enum for different types of harmonic checks"""

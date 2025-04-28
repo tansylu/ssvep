@@ -3,10 +3,14 @@ vgg16_weights_tf_dim_ordering_tf_kernels.h5
 
 # Ignore Visual Studio Code settings
 .vscode/
-
+*.csv
 imgs/
+imgs*/
 #ignore the pictures folder
-
+spectr*/
+run*/
+activation*/
+frames*/
 imgs/*
 results/
 activations_output/
@@ -38,6 +42,11 @@ Thumbs.db
 
 # Ignore logs
 *.log
+
+# Ignore database files
+*.db
+*.sqlite
+*.sqlite3
 
 # Ignore compiled files
 *.so

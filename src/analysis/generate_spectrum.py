@@ -7,9 +7,14 @@ across all runs or for specific runs in the database.
 
 import argparse
 import os
+import sys
 import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
+
+# Add the project root to the Python path
+sys.path.insert(0, os.path.abspath(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))))
+
 from src.database import db
 from datetime import datetime
 import imageio
@@ -461,6 +466,108 @@ def main():
     # Export to CSV if requested
     if args.csv:
         export_to_csv(runs, args.layer_id, args.filter_id, args.csv)
+
+def plot_and_save_spectrums(fourier_transformed_activations, output_dir, fps, dominant_frequencies,
+                      gif_frequency1, gif_frequency2, specific_filter_id=None, specific_layer_id=None,
+                      non_intermod=False):
+    """
+    Plots and saves the spectrums of the Fourier Transformed activations.
+    Args:
+        fourier_transformed_activations: {layer_id: np.array(num_filters, fft_length)}
+        output_dir: The directory where the plots will be saved.
+        dominant_frequencies: {layer_id: {filter_id: dominant_frequency}}
+        gif_frequency1: The first frequency of the GIF used for comparison.
+        gif_frequency2: The second frequency of the GIF used for comparison.
+        specific_filter_id: If provided, only plot this specific filter ID.
+        specific_layer_id: If provided, only plot this specific layer ID.
+        non_intermod: If True, only plot spectrums that are not intermodulation products (f1*f2).
+    """
+    from src.core.signal_processing import is_harmonic_frequency, HarmonicType
+
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+
+    # If specific layer ID is provided, only process that layer
+    layer_ids = [specific_layer_id] if specific_layer_id is not None else fourier_transformed_activations.keys()
+
+    for layer_id in layer_ids:
+        # Skip if the layer ID doesn't exist in the data
+        if layer_id not in fourier_transformed_activations:
+            continue
+
+        layer_fft = fourier_transformed_activations[layer_id]
+        num_filters, fft_length = layer_fft.shape
+
+        # Generate frequency bins (without fftshift)
+        freqs = np.fft.fftfreq(fft_length, d=1/fps)  # freq in Hz
+
+        # Get only positive frequencies (excluding zero/DC)
+        positive_mask = freqs > 0
+        positive_freqs = freqs[positive_mask]
+
+        # If specific filter ID is provided, only process that filter
+        filter_ids = [specific_filter_id] if specific_filter_id is not None and specific_filter_id < num_filters else range(num_filters)
+
+        for filter_id in filter_ids:
+            peak_frequencies = dominant_frequencies[layer_id][filter_id]
+            # Set harmonic detection parameters
+            harmonic_tolerance = 1
+
+            # Check for intermodulation products
+            is_intermod = is_harmonic_frequency(
+                peak_frequencies=peak_frequencies,
+                freq1=gif_frequency1,
+                freq2=gif_frequency2,
+                harmonic_type=HarmonicType.INTERMOD,
+                tolerance=harmonic_tolerance
+            )
+
+            if non_intermod and is_intermod:
+                continue
+
+            plt.figure(figsize=(10, 5))
+            # Get the positive frequency components of the FFT
+            positive_fft = np.abs(layer_fft[filter_id][positive_mask])
+
+            # Filter frequencies to only show up to 35 Hz
+            freq_mask = positive_freqs <= 35
+            plot_freqs = positive_freqs[freq_mask]
+            plot_fft = positive_fft[freq_mask]
+
+            # Plot only positive frequencies up to 35 Hz
+            plt.bar(plot_freqs, plot_fft, width=0.05, label=f'Filter {filter_id}')
+            plt.title(f'Layer {layer_id+1} Filter {filter_id} Spectrum')
+            plt.xlabel('Frequency (Hz)')
+            plt.ylabel('Magnitude')
+            plt.legend()
+
+            # Add more ticks on x-axis
+            # Create ticks every 1 Hz up to 35 Hz
+            x_ticks = np.arange(0, 36, 1)
+            plt.xticks(x_ticks)
+            plt.grid(axis='x', linestyle='--', alpha=0.7)
+
+            # Set x-axis limit to 35 Hz
+            plt.xlim(0, 16)
+
+            # Generate harmonic ticks for visualization
+            max_harmonic = 12  # Show up to 11th harmonic
+            harmonic_ticks1 = [n * gif_frequency1 for n in range(1, max_harmonic)]  # Start from 1 to skip zero
+            harmonic_ticks2 = [n * gif_frequency2 for n in range(1, max_harmonic)]  # Start from 1 to skip zero
+
+            for tick in harmonic_ticks1:
+                plt.axvline(x=tick, color='r', linestyle='--', linewidth=0.5, label='f1 harmonic' if tick == gif_frequency1 else "")
+
+            for tick in harmonic_ticks2:
+                plt.axvline(x=tick, color='g', linestyle='--', linewidth=0.5, label='f2 harmonic' if tick == gif_frequency2 else "")
+
+            # Create subdirectory for this filter and layer
+            filter_layer_dir = os.path.join(output_dir, f"filter_{filter_id}_layer_{layer_id}")
+            os.makedirs(filter_layer_dir, exist_ok=True)
+
+            plot_path = os.path.join(filter_layer_dir, f'spectrum.png')
+            plt.savefig(plot_path)
+            plt.close()
 
 if __name__ == "__main__":
     main()

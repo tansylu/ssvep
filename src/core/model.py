@@ -192,3 +192,18 @@ def load_activations(output_dir):
                 activations[layer_idx].append(None)
             activations[layer_idx][frame_idx] = activation
     return activations
+
+def perform_activations(model, frames, preprocessing_sequence):
+    """
+    Perform activation extraction on a sequence of frames.
+
+    Args:
+        model: The neural network model
+        frames: List of image frames
+        preprocessing_sequence: Preprocessing transformations to apply to each frame
+
+    Returns:
+        dict: Dictionary of activations for each layer
+    """
+    activations = get_activations(model=model, frames=frames, preprocessing_sequence=preprocessing_sequence)
+    return activations

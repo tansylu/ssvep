@@ -16,6 +16,7 @@ run*/
 *.csv
 activation*/
 frames*/
+*.pth
 imgs/*
 results/
 activations_output/

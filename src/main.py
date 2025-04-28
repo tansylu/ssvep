@@ -26,79 +26,7 @@ def save_frames(frames, frames_dir):
         frame_image.save(frame_path)
     #print(f"Frames saved in '{frames_dir}' directory.")
 
-def save_filter_stats_to_csv(filter_stats_table, csv_file_path, image_file=None, db_only=False):
-    """
-    Save filter statistics to a CSV file.
-    Args:
-        filter_stats_table: Dictionary with filter statistics
-        csv_file_path: Path to the CSV file
-        image_file: Current image being processed (optional)
-        db_only: If True, skip saving to CSV
-    """
-    # Skip if db-only mode is enabled
-    if db_only:
-        return
 
-    # Check if file exists to determine if we need to create a new file
-    file_exists = os.path.exists(csv_file_path)
-
-    # Prepare data for CSV
-    csv_data = {}
-
-    # If file exists, read the current data
-    if file_exists:
-        with open(csv_file_path, 'r', newline='') as csvfile:
-            reader = csv.reader(csvfile)
-            try:
-                next(reader)  # Skip header row
-                for row in reader:
-                    if len(row) >= 5:  # Ensure row has enough columns
-                        layer_id, filter_id = row[0], row[1]
-                        key = (layer_id, filter_id)
-                        csv_data[key] = {
-                            'layer': layer_id,
-                            'filter': filter_id,
-                            'total_similarity_score': float(row[2]),
-                            'total_images': int(row[3]),
-                            'avg_similarity_score': float(row[4])
-                        }
-            except StopIteration:
-                # File is empty or has only a header
-                pass
-
-    # Update with current data
-    for (layer_id, filter_id), stats in filter_stats_table.items():
-        total_images = stats["total_images"]
-        if total_images > 0:
-            avg_similarity_score = stats["total_similarity_score"] / total_images
-            key = (str(layer_id), str(filter_id))
-            csv_data[key] = {
-                'layer': layer_id,
-                'filter': filter_id,
-                'total_similarity_score': stats["total_similarity_score"],
-                'total_images': total_images,
-                'avg_similarity_score': avg_similarity_score
-            }
-
-    # Sort by average similarity score (higher means more similar to expected frequencies)
-    sorted_data = sorted(csv_data.values(), key=lambda x: x['avg_similarity_score'], reverse=True)
-
-    # Write to CSV
-    with open(csv_file_path, 'w', newline='') as csvfile:
-        writer = csv.writer(csvfile)
-
-        # Write header
-        writer.writerow(["Layer", "Filter", "Total Similarity Score", "Total Images", "Avg Similarity Score"])
-
-        # Write data
-        for item in sorted_data:
-            writer.writerow([
-                item['layer'],
-                item['filter'],
-                f"{item['total_similarity_score']:.4f}",
-                item['total_images'],
-                f"{item['avg_similarity_score']:.4f}"
-            ])
 
 def load_frames(frames_dir):
     frames = []
@@ -114,7 +42,6 @@ def perform_activations(model, frames, preprocess_seqn):
 
 
 # Define preprocessing transformations
-#print("Creating preprocessing sequence...")
 preprocess_seqn = transforms.Compose([
     transforms.Resize((224, 224)),
     transforms.ToTensor(),
@@ -372,9 +299,6 @@ for image_file in image_files:
                 # Add the similarity score to the total
                 filter_stats_table[filter_key]["total_similarity_score"] += similarity_score
                 filter_stats_table[filter_key]["total_images"] += 1
-
-        # Save filter statistics to CSV file after each image
-        save_filter_stats_to_csv(filter_stats_table, csv_stats_file, image_file, args.db_only)
 
         # Save filter statistics to database
         print(f"Saving filter statistics to database for {image_file}...")

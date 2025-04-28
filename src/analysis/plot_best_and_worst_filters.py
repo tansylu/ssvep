@@ -6,6 +6,7 @@ import argparse
 import sys
 
 # Import necessary modules
+from database.db_stats import export_filter_stats_to_csv
 from src.database import db
 from src.analysis.frequency_similarity import calculate_frequency_similarity_score, get_similarity_category
 
@@ -244,6 +245,11 @@ def plot_best_and_worst_filters(stats_file, num_filters=20, output_dir='filter_c
         run_id: Run ID to use for plotting (if None, use the latest run)
     """
     # Load the data
+    if not os.path.exists(stats_file):
+        export_filter_stats_to_csv("filter_stats.csv")
+        print(f"Filter statistics exported to {stats_file}")
+        stats_file = "filter_stats.csv"
+
     stats_df = load_filter_stats(stats_file)
 
     # Sort by similarity score (ascending for worst, descending for best)
@@ -330,7 +336,7 @@ def plot_best_and_worst_filters(stats_file, num_filters=20, output_dir='filter_c
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Plot FFT responses of best and worst performing filters from database')
-    parser.add_argument('--stats', type=str, default='filter_stats_20250427_164606.csv',
+    parser.add_argument('--stats', type=str, default='filter_stats.csv',
                         help='Path to the filter statistics CSV file')
     parser.add_argument('--num', type=int, default=20,
                         help='Number of best/worst filters to plot')

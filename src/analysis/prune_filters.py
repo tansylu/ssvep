@@ -16,11 +16,7 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.abspath(os.path.join(current_dir, '../..'))
 sys.path.insert(0, project_root)
 
-try:
-    from src.database import db
-    from src.database.db_stats import get_filter_stats, export_filter_stats_to_csv
-except ImportError:
-    print("Warning: Could not import database modules. Some features may be limited.")
+# Import removed since we don't need database functions anymore
 
 def load_filter_stats(stats_file):
     """Load filter statistics from CSV file"""
@@ -94,34 +90,56 @@ def identify_filters_to_prune(stats_df, prune_percentage=0.3, min_score=None):
 def map_layer_filter_to_pytorch(layer_id, filter_id, model_type="resnet18"):
     """
     Map a database layer_id and filter_id to actual PyTorch model layer name.
+    Add range checks to prevent out of range filter indices.
     """
-    # Add more mappings based on your layer IDs
     if model_type == "resnet18":
-        # Extended mapping for ResNet18 
+        # Layer sizes in ResNet18
+        layer_sizes = {
+            "conv1": 64,
+            "layer1.0.conv1": 64, "layer1.0.conv2": 64,
+            "layer1.1.conv1": 64, "layer1.1.conv2": 64,
+            "layer2.0.conv1": 128, "layer2.0.conv2": 128,
+            "layer2.1.conv1": 128, "layer2.1.conv2": 128,
+            "layer3.0.conv1": 256, "layer3.0.conv2": 256,
+            "layer3.1.conv1": 256, "layer3.1.conv2": 256,
+            "layer4.0.conv1": 512, "layer4.0.conv2": 512,
+            "layer4.1.conv1": 512, "layer4.1.conv2": 512,
+            "fc": 1000,
+            "bn1": 64
+        }
+        
         layer_map = {
-            1: "layer1.0.conv1",
-            2: "layer1.0.conv2",
-            3: "layer1.1.conv1",
-            4: "layer1.1.conv2",
-            5: "layer2.0.conv1",
+            0: "conv1",                # First conv layer (64 filters)
+            1: "layer1.0.conv1",       # First block, first conv (64 filters)
+            2: "layer1.0.conv2",       # First block, second conv (64 filters)
+            3: "layer1.1.conv1",       # Second block in layer1, first conv
+            4: "layer1.1.conv2",       # Second block in layer1, second conv
+            5: "layer2.0.conv1",       # First block in layer2, first conv (128 filters)
             6: "layer2.0.conv2",
             7: "layer2.1.conv1",
             8: "layer2.1.conv2",
-            9: "layer3.0.conv1",
+            9: "layer3.0.conv1",       # First block in layer3, first conv (256 filters)
             10: "layer3.0.conv2",
             11: "layer3.1.conv1",
             12: "layer3.1.conv2",
-            13: "layer4.0.conv1",
+            13: "layer4.0.conv1",      # First block in layer4, first conv (512 filters)
             14: "layer4.0.conv2",
             15: "layer4.1.conv1",
             16: "layer4.1.conv2",
-            17: "conv1",
-            18: "fc",  # Fully connected layer
-            19: "bn1",  # Batch norm layer
+            17: "fc",                  # Fully connected layer (1000 units)
+            18: "fc",                  # Duplicated for backward compatibility
+            19: "fc"                   # Duplicated for backward compatibility
         }
         
         if layer_id in layer_map:
-            return layer_map[layer_id], filter_id
+            module_name = layer_map[layer_id]
+            
+            # Check if filter_id is within the valid range for this layer
+            if module_name in layer_sizes and filter_id < layer_sizes[module_name]:
+                return module_name, filter_id
+            else:
+                print(f"Warning: Filter index {filter_id} out of range for {module_name} (max: {layer_sizes.get(module_name, 'unknown')})")
+                return None, None
         else:
             print(f"Warning: Unknown layer_id {layer_id}")
             return None, None
@@ -156,12 +174,12 @@ def load_model(model_path):
             # Try to determine model type and create model
             if any("resnet18" in k for k in state_dict.keys()):
                 from torchvision.models import resnet18
-                model = resnet18(pretrained=False)
+                model = resnet18(weights=None)
                 model.load_state_dict(state_dict)
                 return model
             elif any("resnet50" in k for k in state_dict.keys()):
                 from torchvision.models import resnet50
-                model = resnet50(pretrained=False)
+                model = resnet50(weights=None)
                 model.load_state_dict(state_dict)
                 return model
             else:
@@ -228,11 +246,11 @@ def create_pruned_model(model, filters_to_prune, model_type="resnet18"):
 
             # Create a new model with the pruned weights
             if model_type == "resnet18":
-                new_model = models.resnet18(pretrained=False)
+                new_model = models.resnet18(weights=None)
                 new_model.load_state_dict(pruned_state_dict, strict=False)
                 return new_model
             elif model_type == "resnet50":
-                new_model = models.resnet50(pretrained=False)
+                new_model = models.resnet50(weights=None)
                 new_model.load_state_dict(pruned_state_dict, strict=False)
                 return new_model
             else:
@@ -389,175 +407,28 @@ def visualize_pruning(stats_df, filters_to_prune, output_path):
     plt.savefig(output_path)
     print(f"Pruning visualization saved to {output_path}")
 
-def evaluate_model(model, test_loader, device='auto'):
-    """
-    Evaluate model accuracy on test data.
-    
-    Args:
-        model: PyTorch model to evaluate
-        test_loader: DataLoader with test data
-        device: Device to run evaluation on ('auto', 'cuda', or 'cpu')
-    
-    Returns:
-        dict: Evaluation metrics
-    """
-    try:
-        import torch
-        import torch.nn as nn
-        
-        # Determine device
-        if device == 'auto':
-            device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        else:
-            device = torch.device(device)
-        
-        print(f"Evaluating model on {device}")
-        
-        model = model.to(device)
-        model.eval()
-        
-        criterion = nn.CrossEntropyLoss()
-        total_loss = 0.0
-        correct = 0
-        total = 0
-        
-        with torch.no_grad():
-            for inputs, labels in test_loader:
-                inputs = inputs.to(device)
-                labels = labels.to(device)
-                
-                # Forward pass
-                outputs = model(inputs)
-                loss = criterion(outputs, labels)
-                
-                # Track metrics
-                total_loss += loss.item() * inputs.size(0)
-                _, predicted = outputs.max(1)
-                correct += predicted.eq(labels).sum().item()
-                total += labels.size(0)
-                
-        # Calculate final metrics
-        accuracy = 100.0 * correct / total
-        avg_loss = total_loss / total
-        
-        print(f"Test Accuracy: {accuracy:.2f}%")
-        print(f"Test Loss: {avg_loss:.4f}")
-        
-        return {
-            'accuracy': accuracy,
-            'loss': avg_loss,
-            'correct': correct,
-            'total': total,
-        }
-    except Exception as e:
-        print(f"Error during model evaluation: {e}")
-        import traceback
-        traceback.print_exc()
-        return None
-        
-def load_test_data(data_dir, batch_size=32):
-    """
-    Load test dataset for model evaluation.
-    
-    Args:
-        data_dir: Directory containing test data
-        batch_size: Batch size for data loading
-    
-    Returns:
-        PyTorch DataLoader for test data
-    """
-    try:
-        import torch
-        from torchvision import datasets, transforms
-        
-        # Define data preprocessing
-        transform = transforms.Compose([
-            transforms.Resize(256),
-            transforms.CenterCrop(224),
-            transforms.ToTensor(),
-            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-        ])
-        
-        # Load dataset
-        test_dataset = datasets.ImageFolder(data_dir, transform=transform)
-        print(f"Loaded test dataset with {len(test_dataset)} images from {data_dir}")
-        
-        # Create data loader
-        test_loader = torch.utils.data.DataLoader(
-            test_dataset, batch_size=batch_size,
-            shuffle=False, num_workers=2, pin_memory=True
-        )
-        
-        return test_loader
-    except Exception as e:
-        print(f"Error loading test data: {e}")
-        import traceback
-        traceback.print_exc()
-        return None
-        
-def generate_stats_csv_from_db(output_path):
-    """
-    Generate filter statistics CSV file from the database.
-    
-    Args:
-        output_path: Path to save the CSV file
-    """
-    try:
-        # Check if there are stats in the database
-        stats = get_filter_stats()
-        if not stats:
-            print("No filter statistics found in the database.")
-            print("Make sure you've run the SSVEP analysis that populates the database first.")
-            return False
-        
-        # Export to CSV
-        print(f"Exporting {len(stats)} filter statistics to {output_path}")
-        export_filter_stats_to_csv(output_path)
-        print(f"Filter statistics exported to {output_path}")
-        return True
-    except Exception as e:
-        print(f"Error generating statistics from database: {e}")
-        return False
-
 def main():
-    parser = argparse.ArgumentParser(description='Prune filters based on similarity scores and evaluate performance')
-    parser.add_argument('--stats', type=str, default='filter_stats.csv',
+    parser = argparse.ArgumentParser(description='Prune filters based on similarity scores')
+    parser.add_argument('--stats', type=str, required=True,
                         help='Path to the filter statistics CSV file')
     parser.add_argument('--model', type=str, required=True,
                         help='Path to the original model file')
     parser.add_argument('--output', type=str, default='pruned_model',
                         help='Output directory for the pruned model')
-    parser.add_argument('--percentage', type=float, default=0.3,
+    parser.add_argument('--percentage', type=float, default=0.1,
                         help='Percentage of worst filters to prune (0-1)')
     parser.add_argument('--min-score', type=float, default=None,
                         help='Minimum similarity score threshold (filters below this will be pruned)')
     parser.add_argument('--model-type', type=str, default='resnet18',
                         help='Model architecture type')
-    parser.add_argument('--test-data', type=str, default=None,
-                        help='Directory containing test data for evaluation')
-    parser.add_argument('--batch-size', type=int, default=32,
-                        help='Batch size for evaluation')
-    parser.add_argument('--device', type=str, default='auto',
-                        help="Device for evaluation: 'auto', 'cuda', or 'cpu'")
-    parser.add_argument('--use-db', action='store_true',
-                        help='Generate statistics CSV from database instead of loading from file')
 
     args = parser.parse_args()
 
     # Create output directory if it doesn't exist
     os.makedirs(args.output, exist_ok=True)
 
-    # Get filter statistics
-    stats_file = args.stats
-    if args.use_db:
-        print("Generating filter statistics from database...")
-        db_stats_path = os.path.join(args.output, "filter_stats_from_db.csv")
-        if generate_stats_csv_from_db(db_stats_path):
-            stats_file = db_stats_path
-        else:
-            print("Failed to generate statistics from database, using file specified by --stats")
-    
-    stats_df = load_filter_stats(stats_file)
+    # Load filter statistics directly from file
+    stats_df = load_filter_stats(args.stats)
     
     if stats_df is None:
         print("Error: Could not load filter statistics. Exiting.")
@@ -612,47 +483,10 @@ def main():
             else:
                 f.write(f"{layer_id},{filter_id},unknown\n")
 
-    # Evaluate model if test data is provided
-    if args.test_data:
-        print("\n=== Model Evaluation ===")
-        # Load test data
-        test_loader = load_test_data(args.test_data, args.batch_size)
-        
-        if test_loader:
-            # Evaluate original model
-            print("\nEvaluating original model performance...")
-            original_metrics = evaluate_model(original_model, test_loader, args.device)
-            
-            # Evaluate pruned model
-            print("\nEvaluating pruned model performance...")
-            pruned_metrics = evaluate_model(pruned_model, test_loader, args.device)
-            
-            # Calculate changes and output comparison
-            if original_metrics and pruned_metrics:
-                acc_change = pruned_metrics['accuracy'] - original_metrics['accuracy']
-                loss_change = pruned_metrics['loss'] - original_metrics['loss']
-                
-                # Save evaluation results
-                results_path = os.path.join(args.output, 'evaluation_results.txt')
-                with open(results_path, 'w') as f:
-                    f.write("=== Pruning Evaluation Results ===\n\n")
-                    f.write(f"Original Model Accuracy: {original_metrics['accuracy']:.2f}%\n")
-                    f.write(f"Pruned Model Accuracy: {pruned_metrics['accuracy']:.2f}%\n")
-                    f.write(f"Accuracy Change: {acc_change:.2f}%\n\n")
-                    f.write(f"Original Model Loss: {original_metrics['loss']:.4f}\n")
-                    f.write(f"Pruned Model Loss: {pruned_metrics['loss']:.4f}\n")
-                    f.write(f"Loss Change: {loss_change:.4f}\n\n")
-                    f.write(f"Total Pruned Filters: {len(filters_to_prune)} out of {len(stats_df)}\n")
-                
-                print(f"\nEvaluation summary:")
-                print(f"  Original Accuracy: {original_metrics['accuracy']:.2f}%")
-                print(f"  Pruned Accuracy: {pruned_metrics['accuracy']:.2f}%")
-                print(f"  Accuracy Change: {acc_change:.2f}%")
-                print(f"\nDetailed results saved to {results_path}")
-                
     print(f"\nPruned {len(filters_to_prune)} filters out of {len(stats_df)} total filters")
     print(f"Pruning details saved to {os.path.join(args.output, 'pruned_filters.txt')}")
     print(f"Pruned model saved to {pruned_model_path}")
+    print(f"\nUse evaluate_models.py to test the performance of your pruned model")
 
 if __name__ == "__main__":
     main()

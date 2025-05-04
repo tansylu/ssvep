@@ -74,3 +74,8 @@ coverage.xml
 *.cover
 .hypothesis/
 .pytest_cache/
+
+#ignore comparison results
+comparison_results/
+#ignore pruned model weights
+pruned_outputs/

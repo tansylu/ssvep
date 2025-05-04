@@ -115,20 +115,20 @@ def map_layer_filter_to_pytorch(layer_id, filter_id, model_type="resnet18"):
             3: "layer1.1.conv1",       # Second block in layer1, first conv
             4: "layer1.1.conv2",       # Second block in layer1, second conv
             5: "layer2.0.conv1",       # First block in layer2, first conv (128 filters)
-            6: "layer2.0.conv2",
-            7: "layer2.1.conv1",
-            8: "layer2.1.conv2",
-            9: "layer3.0.conv1",       # First block in layer3, first conv (256 filters)
-            10: "layer3.0.conv2",
-            11: "layer3.1.conv1",
-            12: "layer3.1.conv2",
-            13: "layer4.0.conv1",      # First block in layer4, first conv (512 filters)
-            14: "layer4.0.conv2",
-            15: "layer4.1.conv1",
-            16: "layer4.1.conv2",
-            17: "fc",                  # Fully connected layer (1000 units)
-            18: "fc",                  # Duplicated for backward compatibility
-            19: "fc"                   # Duplicated for backward compatibility
+            6: "layer2.0.conv2",       # First block in layer2, second conv (128 filters)
+            # Note: Layer 7 is missing in your system map
+            8: "layer2.1.conv1",       # Second block in layer2, first conv (128 filters)
+            9: "layer2.1.conv2",       # Second block in layer2, second conv (128 filters)
+            10: "layer3.0.conv1",      # First block in layer3, first conv (256 filters)
+            11: "layer3.0.conv2",      # First block in layer3, second conv (256 filters)
+            # Note: Layer 12 is missing in your system map
+            13: "layer3.1.conv1",      # Second block in layer3, first conv (256 filters)
+            14: "layer3.1.conv2",      # Second block in layer3, second conv (256 filters)
+            15: "layer4.0.conv1",      # First block in layer4, first conv (512 filters)
+            16: "layer4.0.conv2",      # First block in layer4, second conv (512 filters)
+            # Note: Layer 17 is missing in your system map
+            18: "layer4.1.conv1",      # Second block in layer4, first conv (512 filters)
+            19: "layer4.1.conv2"       # Second block in layer4, second conv (512 filters)
         }
         
         if layer_id in layer_map:
@@ -415,7 +415,7 @@ def main():
                         help='Path to the original model file')
     parser.add_argument('--output', type=str, default='pruned_model',
                         help='Output directory for the pruned model')
-    parser.add_argument('--percentage', type=float, default=0.1,
+    parser.add_argument('--percentage', type=float, default=0.05,
                         help='Percentage of worst filters to prune (0-1)')
     parser.add_argument('--min-score', type=float, default=None,
                         help='Minimum similarity score threshold (filters below this will be pruned)')

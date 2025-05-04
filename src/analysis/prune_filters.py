@@ -29,14 +29,16 @@ def load_filter_stats(stats_file):
         print(f"Error loading filter statistics: {e}")
         return None
 
-def identify_filters_to_prune(stats_df, prune_percentage=0.3, min_score=None):
+def identify_filters_to_prune(stats_df, prune_percentage=0.3, min_score=None, max_score=None, prune_highest=False):
     """
     Identify filters to prune based on similarity scores.
 
     Args:
         stats_df: DataFrame containing filter statistics
-        prune_percentage: Percentage of worst filters to prune (0-1)
+        prune_percentage: Percentage of filters to prune (0-1)
         min_score: Minimum similarity score threshold (filters below this will be pruned)
+        max_score: Maximum similarity score threshold (filters above this will be pruned)
+        prune_highest: If True, prune filters with highest scores instead of lowest
 
     Returns:
         list: List of (layer_id, filter_id) tuples to prune
@@ -66,24 +68,32 @@ def identify_filters_to_prune(stats_df, prune_percentage=0.3, min_score=None):
         print(f"Error: Missing required columns in stats file: {missing_columns}")
         return []
 
-    # Sort by similarity score (ascending)
-    sorted_df = stats_df.sort_values('Avg Similarity Score', ascending=True)
+    # Sort by similarity score (ascending for lowest, descending for highest)
+    sorted_df = stats_df.sort_values('Avg Similarity Score', ascending=not prune_highest)
 
     filters_to_prune = []
 
-    # Prune based on minimum score threshold
-    if min_score is not None:
+    # Prune based on score threshold
+    if prune_highest and max_score is not None:
+        filters_to_prune = [(int(row['Layer']), int(row['Filter']))
+                           for _, row in stats_df.iterrows()
+                           if row['Avg Similarity Score'] > max_score]
+        print(f"Identified {len(filters_to_prune)} filters with score above {max_score}")
+    elif not prune_highest and min_score is not None:
         filters_to_prune = [(int(row['Layer']), int(row['Filter']))
                            for _, row in stats_df.iterrows()
                            if row['Avg Similarity Score'] < min_score]
         print(f"Identified {len(filters_to_prune)} filters with score below {min_score}")
-
     # Prune based on percentage
     else:
         num_to_prune = int(len(sorted_df) * prune_percentage)
         filters_to_prune = [(int(row['Layer']), int(row['Filter']))
                            for _, row in sorted_df.head(num_to_prune).iterrows()]
-        print(f"Identified {len(filters_to_prune)} filters to prune ({prune_percentage*100:.1f}% of total)")
+        
+        if prune_highest:
+            print(f"Identified {len(filters_to_prune)} highest-scoring filters to prune ({prune_percentage*100:.1f}% of total)")
+        else:
+            print(f"Identified {len(filters_to_prune)} lowest-scoring filters to prune ({prune_percentage*100:.1f}% of total)")
 
     return filters_to_prune
 
@@ -416,12 +426,15 @@ def main():
     parser.add_argument('--output', type=str, default='pruned_model',
                         help='Output directory for the pruned model')
     parser.add_argument('--percentage', type=float, default=0.05,
-                        help='Percentage of worst filters to prune (0-1)')
+                        help='Percentage of filters to prune (0-1)')
     parser.add_argument('--min-score', type=float, default=None,
                         help='Minimum similarity score threshold (filters below this will be pruned)')
+    parser.add_argument('--max-score', type=float, default=None,
+                        help='Maximum similarity score threshold (filters above this will be pruned)')
     parser.add_argument('--model-type', type=str, default='resnet18',
                         help='Model architecture type')
-
+    parser.add_argument('--prune-highest', action='store_true',
+                        help='Prune filters with highest scores instead of lowest')
     args = parser.parse_args()
 
     # Create output directory if it doesn't exist
@@ -438,7 +451,9 @@ def main():
     filters_to_prune = identify_filters_to_prune(
         stats_df,
         prune_percentage=args.percentage,
-        min_score=args.min_score
+        min_score=args.min_score,
+        max_score=args.max_score,
+        prune_highest=args.prune_highest
     )
     
     if not filters_to_prune:
@@ -483,7 +498,8 @@ def main():
             else:
                 f.write(f"{layer_id},{filter_id},unknown\n")
 
-    print(f"\nPruned {len(filters_to_prune)} filters out of {len(stats_df)} total filters")
+    pruning_type = "highest-scoring" if args.prune_highest else "lowest-scoring"
+    print(f"\nPruned {len(filters_to_prune)} {pruning_type} filters out of {len(stats_df)} total filters")
     print(f"Pruning details saved to {os.path.join(args.output, 'pruned_filters.txt')}")
     print(f"Pruned model saved to {pruned_model_path}")
     print(f"\nUse evaluate_models.py to test the performance of your pruned model")

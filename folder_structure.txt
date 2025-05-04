@@ -14,15 +14,19 @@ project_root/
 │   │   ├── __init__.py
 │   │   ├── frequency_similarity.py
 │   │   ├── analyze_similarity_scores.py
-│   │   └── generate_spectrum.py
+│   │   ├── generate_spectrum.py
+│   │   ├── evaluate_models.py  # Model evaluation tool
+│   │   └── prune_filters.py    # Filter pruning utility
 │   ├── utils/
 │   │   ├── __init__.py
-│   │   └── flicker_image.py
+│   │   ├── flicker_image.py
+│   │   └── find_unused_images.py  # Utility to find unused images
 │   └── main.py
 ├── tests/
 │   ├── __init__.py
 │   ├── test_db.py
-│   └── test_signal_processing.py
+│   ├── test_signal_processing.py
+│   └── README.md              # Test documentation
 ├── docs/
 │   ├── README.md
 │   ├── FFT_DATABASE_README.md
@@ -31,11 +35,17 @@ project_root/
 ├── data/
 │   ├── raw/                  # Original images
 │   ├── processed/            # Processed frames and activations
-│   └── models/              # Saved model weights
+│   ├── models/               # Saved model weights
+│   ├── stats/                # Statistics and tracking files
+│   │   ├── images_used.csv   # CSV tracking which images have been processed
+│   │   └── filter_stats.csv  # Statistics about filter performance
+│   ├── 10k-imagenet/         # Original image database
+│   └── unused_images/        # Directory for unused images
 ├── results/
 │   ├── spectrums/
 │   ├── plots/
 │   └── exports/
 ├── requirements.txt
 ├── .gitignore
+├── folder_structure.txt      # This file
 └── setup.py

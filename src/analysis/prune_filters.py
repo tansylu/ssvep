@@ -171,15 +171,15 @@ def load_model(model_path):
         import torch
         device = torch.device("cpu")
         
-        # Try loading as a full model first
+        # Try loading as a full model first with weights_only=False
         try:
-            model = torch.load(model_path, map_location=device)
+            model = torch.load(model_path, map_location=device, weights_only=False)
             print(f"Loaded full model from {model_path}")
             return model
         except:
             # If that fails, try loading as a state dict
             print("Could not load as full model, trying as state dict...")
-            state_dict = torch.load(model_path, map_location=device)
+            state_dict = torch.load(model_path, map_location=device, weights_only=False)
             
             # Try to determine model type and create model
             if any("resnet18" in k for k in state_dict.keys()):

@@ -35,8 +35,8 @@ def load_model(model_path, device='cpu', model_type='resnet18'):
         PyTorch model
     """
     try:
-        # Load model file
-        model_data = torch.load(model_path, map_location=device)
+        # Load model file with weights_only=False to handle legacy formats
+        model_data = torch.load(model_path, map_location=device, weights_only=False)
         
         # Check if model is a state dictionary
         is_state_dict = isinstance(model_data, dict) or hasattr(model_data, 'items')

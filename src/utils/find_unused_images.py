@@ -6,8 +6,8 @@ from pathlib import Path
 import argparse  # Add this import
 
 # Paths
-ORIGINAL_DB_PATH = "data/10k-imagenet"
-USED_IMAGES_CSV = "data/stats/images_used.csv"  # CSV containing used images
+ORIGINAL_DB_PATH = "/Users/tansylu/Documents/ssvep/data/raw/imagenet_subtrain"
+USED_IMAGES_CSV = "data/images_used.csv"  # CSV containing used images
 OUTPUT_DIR = "data/unused_images"    # Directory to copy unused images to
 
 """bash
@@ -103,7 +103,7 @@ def find_unused_images(original_db_path, used_images_csv, output_dir, num_images
 if __name__ == "__main__":
     # Add command-line argument parsing
     parser = argparse.ArgumentParser(description='Find unused images from the original database')
-    parser.add_argument('--num-images', type=int, default=30, 
+    parser.add_argument('--num-images', type=int, default=300, 
                         help='Number of unused images to find (default: 30)')
     
     args = parser.parse_args()

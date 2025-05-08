@@ -17,6 +17,8 @@ project_root/
 │   │   ├── generate_spectrum.py
 │   │   ├── evaluate_models.py  # Model evaluation tool
 │   │   └── prune_filters.py    # Filter pruning utility
+│   │   └── clean_pruned_model.py
+│   │   └── retrain_model.py
 │   ├── utils/
 │   │   ├── __init__.py
 │   │   ├── flicker_image.py
@@ -41,6 +43,7 @@ project_root/
 │   │   └── filter_stats.csv  # Statistics about filter performance
 │   ├── 10k-imagenet/         # Original image database
 │   └── unused_images/        # Directory for unused images
+│   └── imagenet_split        # Train-val split on 10k imagenet
 ├── results/
 │   ├── spectrums/
 │   ├── plots/

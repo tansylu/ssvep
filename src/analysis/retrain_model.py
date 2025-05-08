@@ -6,17 +6,14 @@ import matplotlib.pyplot as plt
 import time
 from tqdm import tqdm
 
+from clean_pruned_model import CleanResNet
+
 # PyTorch imports
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
 from torchvision import datasets, transforms, models
-
-'''
-Standalone usage:
-python src/analysis/retrain_model.py --model path/to/pruned_model.pth --data-dir /path/to/training_data --output retrained_output --epochs 10 --batch-size 64
-'''
 
 # Add project root to Python path
 current_dir = os.path.dirname(os.path.abspath(__file__))

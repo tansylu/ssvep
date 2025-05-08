@@ -5,18 +5,29 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import copy
+import json
+from tqdm import tqdm
+
+# PyTorch imports
+import torch
+import torch.nn as nn
+from torchvision import models
 
 '''
 run with:
 python src/analysis/prune_filters.py --model data/models/resnet18.pth --stats data/filter_stats.csv --model-type resnet18 --output pruned_output
+
+For structural pruning (physically removing filters):
+python src/analysis/prune_filters.py --model data/models/resnet18.pth --stats data/filter_stats.csv --model-type resnet18 --output structurally_pruned --percentage 0.05 --structural-pruning
+
+For pruning and then retraining:
+python src/analysis/prune_filters.py --model data/models/resnet18.pth --stats data/filter_stats.csv --model-type resnet18 --output pruned_retrained --percentage 0.05 --retrain --data-dir /path/to/dataset
 '''
 
 # Add project root to Python path
 current_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.abspath(os.path.join(current_dir, '../..'))
 sys.path.insert(0, project_root)
-
-# Import removed since we don't need database functions anymore
 
 def load_filter_stats(stats_file):
     """Load filter statistics from CSV file"""
@@ -168,44 +179,45 @@ def load_model(model_path):
         PyTorch model
     """
     try:
-        import torch
         device = torch.device("cpu")
         
-        # Try loading as a full model first
-        try:
-            model = torch.load(model_path, map_location=device)
-            print(f"Loaded full model from {model_path}")
-            return model
-        except:
-            # If that fails, try loading as a state dict
-            print("Could not load as full model, trying as state dict...")
-            state_dict = torch.load(model_path, map_location=device)
+        # Load the file
+        loaded_obj = torch.load(model_path, map_location=device)
+        
+        # Check if it's a state dict
+        if isinstance(loaded_obj, dict) and not isinstance(loaded_obj, torch.nn.Module):
+            print(f"Loaded state dictionary from {model_path}, converting to model...")
             
-            # Try to determine model type and create model
-            if any("resnet18" in k for k in state_dict.keys()):
-                from torchvision.models import resnet18
-                model = resnet18(weights=None)
-                model.load_state_dict(state_dict)
+            # Try to determine the model type
+            if any("layer4.1.conv2" in k for k in loaded_obj.keys()):
+                # Create a new model and load the state dict
+                model = models.resnet18(weights=None)
+                model.load_state_dict(loaded_obj, strict=False)
+                print("Created ResNet18 model from state dictionary")
                 return model
-            elif any("resnet50" in k for k in state_dict.keys()):
-                from torchvision.models import resnet50
-                model = resnet50(weights=None)
-                model.load_state_dict(state_dict)
+            elif any("layer4.2.conv3" in k for k in loaded_obj.keys()):
+                model = models.resnet50(weights=None)
+                model.load_state_dict(loaded_obj, strict=False)
+                print("Created ResNet50 model from state dictionary")
                 return model
             else:
-                print("Could not determine model architecture from state dict.")
+                print("Could not determine model type from state dict")
                 return None
+        elif isinstance(loaded_obj, torch.nn.Module):
+            print(f"Loaded full model from {model_path}")
+            return loaded_obj
+        else:
+            print(f"Unexpected object type: {type(loaded_obj)}")
+            return None
     except Exception as e:
         print(f"Error loading model: {e}")
+        import traceback
+        traceback.print_exc()
         return None
 
 def create_pruned_model(model, filters_to_prune, model_type="resnet18"):
-    """Create a new model with pruned filters."""
+    """Create a new model with pruned filters (weights zeroed out)."""
     try:
-        import torch
-        import torch.nn as nn
-        from torchvision import models
-        
         # Check if model is a state dict
         is_state_dict = isinstance(model, dict) or hasattr(model, 'items')
         
@@ -327,19 +339,321 @@ def create_pruned_model(model, filters_to_prune, model_type="resnet18"):
         traceback.print_exc()
         return None
 
-def save_pruned_model(model, output_path):
-    """Save pruned model to a file."""
+def create_compact_resnet(model, filters_to_prune, model_type="resnet18"):
+    """
+    Create a compact model by physically removing the pruned filters.
+    
+    Args:
+        model: Original PyTorch model
+        filters_to_prune: List of (layer_id, filter_id) tuples to prune
+        model_type: Model architecture type
+        
+    Returns:
+        Compact model with filters physically removed
+    """
+    # Group filters to prune by layer
+    pruned_filters_by_module = {}
+    for layer_id, filter_id in filters_to_prune:
+        module_name, filter_index = map_layer_filter_to_pytorch(layer_id, filter_id, model_type)
+        if module_name is None:
+            continue
+        
+        if module_name not in pruned_filters_by_module:
+            pruned_filters_by_module[module_name] = []
+        
+        pruned_filters_by_module[module_name].append(filter_index)
+    
+    # Sort filter indices for each module (important for correct removal)
+    for module_name in pruned_filters_by_module:
+        pruned_filters_by_module[module_name] = sorted(pruned_filters_by_module[module_name], reverse=True)
+    
+    print("Creating compact ResNet model with physically removed filters...")
+    
+    if model_type == "resnet18":
+        # Create new ResNet model
+        compact_model = models.resnet18(weights=None)
+        
+        # Copy weights for non-pruned filters
+        with torch.no_grad():
+            # First handle the initial conv layer
+            if "conv1" in pruned_filters_by_module:
+                pruned_filters = pruned_filters_by_module["conv1"]
+                original_conv = model.conv1
+                
+                # Calculate the new number of filters
+                new_out_channels = original_conv.out_channels - len(pruned_filters)
+                
+                # Create a new convolution layer with fewer filters
+                new_conv = nn.Conv2d(
+                    original_conv.in_channels, 
+                    new_out_channels,
+                    kernel_size=original_conv.kernel_size,
+                    stride=original_conv.stride,
+                    padding=original_conv.padding,
+                    bias=(original_conv.bias is not None)
+                )
+                
+                # Copy weights for the filters we're keeping
+                keep_indices = [i for i in range(original_conv.out_channels) if i not in pruned_filters]
+                for i, keep_idx in enumerate(keep_indices):
+                    new_conv.weight.data[i] = original_conv.weight.data[keep_idx]
+                    if original_conv.bias is not None:
+                        new_conv.bias.data[i] = original_conv.bias.data[keep_idx]
+                
+                # Replace the layer in the model
+                compact_model.conv1 = new_conv
+                
+                # Also adjust the batch normalization layer
+                if hasattr(model, 'bn1') and hasattr(compact_model, 'bn1'):
+                    orig_bn = model.bn1
+                    new_bn = nn.BatchNorm2d(new_out_channels)
+                    
+                    # Copy batch norm parameters for kept filters
+                    for i, idx in enumerate(keep_indices):
+                        new_bn.weight.data[i] = orig_bn.weight.data[idx]
+                        new_bn.bias.data[i] = orig_bn.bias.data[idx]
+                        new_bn.running_mean.data[i] = orig_bn.running_mean.data[idx]
+                        new_bn.running_var.data[i] = orig_bn.running_var.data[idx]
+                    
+                    compact_model.bn1 = new_bn
+                
+                print(f"Adjusted conv1: {original_conv.out_channels} -> {new_out_channels} filters")
+            
+            # Process each layer in the ResNet model
+            for layer_idx in range(1, 5):  # layers 1 to 4 in ResNet
+                layer_name = f"layer{layer_idx}"
+                orig_layer = getattr(model, layer_name)
+                compact_layer = getattr(compact_model, layer_name)
+                
+                for block_idx in range(len(orig_layer)):
+                    orig_block = orig_layer[block_idx]
+                    compact_block = compact_layer[block_idx]
+                    
+                    # Process first conv in the block
+                    first_conv_name = f"{layer_name}.{block_idx}.conv1"
+                    if first_conv_name in pruned_filters_by_module:
+                        pruned_filters = pruned_filters_by_module[first_conv_name]
+                        orig_conv = orig_block.conv1
+                        
+                        # Calculate new dimensions
+                        new_out_channels = orig_conv.out_channels - len(pruned_filters)
+                        
+                        # Create new conv layer
+                        new_conv = nn.Conv2d(
+                            orig_conv.in_channels,
+                            new_out_channels,
+                            kernel_size=orig_conv.kernel_size,
+                            stride=orig_conv.stride,
+                            padding=orig_conv.padding,
+                            bias=(orig_conv.bias is not None)
+                        )
+                        
+                        # Copy weights for kept filters
+                        keep_indices = [i for i in range(orig_conv.out_channels) if i not in pruned_filters]
+                        for i, keep_idx in enumerate(keep_indices):
+                            new_conv.weight.data[i] = orig_conv.weight.data[keep_idx]
+                            if orig_conv.bias is not None:
+                                new_conv.bias.data[i] = orig_conv.bias.data[keep_idx]
+                        
+                        # Replace the conv layer
+                        compact_block.conv1 = new_conv
+                        
+                        # Adjust batch norm
+                        orig_bn = orig_block.bn1
+                        new_bn = nn.BatchNorm2d(new_out_channels)
+                        
+                        for i, idx in enumerate(keep_indices):
+                            new_bn.weight.data[i] = orig_bn.weight.data[idx]
+                            new_bn.bias.data[i] = orig_bn.bias.data[idx]
+                            new_bn.running_mean.data[i] = orig_bn.running_mean.data[idx]
+                            new_bn.running_var.data[i] = orig_bn.running_var.data[idx]
+                        
+                        compact_block.bn1 = new_bn
+                        
+                        print(f"Adjusted {first_conv_name}: {orig_conv.out_channels} -> {new_out_channels} filters")
+                    
+                    # Process second conv in the block
+                    second_conv_name = f"{layer_name}.{block_idx}.conv2"
+                    if second_conv_name in pruned_filters_by_module:
+                        pruned_filters = pruned_filters_by_module[second_conv_name]
+                        orig_conv = orig_block.conv2
+                        
+                        # Calculate new dimensions
+                        new_out_channels = orig_conv.out_channels - len(pruned_filters)
+                        new_in_channels = compact_block.conv1.out_channels  # Use the adjusted first conv's out_channels
+                        
+                        # Create new conv layer
+                        new_conv = nn.Conv2d(
+                            new_in_channels,
+                            new_out_channels,
+                            kernel_size=orig_conv.kernel_size,
+                            stride=orig_conv.stride,
+                            padding=orig_conv.padding,
+                            bias=(orig_conv.bias is not None)
+                        )
+                        
+                        # Copy weights for kept filters and adjusted input channels
+                        keep_indices = [i for i in range(orig_conv.out_channels) if i not in pruned_filters]
+                        prev_keep_indices = [i for i in range(orig_block.conv1.out_channels) 
+                                          if i not in (pruned_filters_by_module.get(f"{layer_name}.{block_idx}.conv1") or [])]
+                        
+                        # Copy adjusted weights
+                        for i, out_idx in enumerate(keep_indices):
+                            for j, in_idx in enumerate(prev_keep_indices):
+                                if j < new_in_channels and in_idx < orig_conv.weight.data.shape[1]:
+                                    new_conv.weight.data[i, j] = orig_conv.weight.data[out_idx, in_idx]
+                            
+                            if orig_conv.bias is not None:
+                                new_conv.bias.data[i] = orig_conv.bias.data[out_idx]
+                        
+                        # Replace the conv layer
+                        compact_block.conv2 = new_conv
+                        
+                        # Adjust batch norm
+                        orig_bn = orig_block.bn2
+                        new_bn = nn.BatchNorm2d(new_out_channels)
+                        
+                        for i, idx in enumerate(keep_indices):
+                            new_bn.weight.data[i] = orig_bn.weight.data[idx]
+                            new_bn.bias.data[i] = orig_bn.bias.data[idx]
+                            new_bn.running_mean.data[i] = orig_bn.running_mean.data[idx]
+                            new_bn.running_var.data[i] = orig_bn.running_var.data[idx]
+                        
+                        compact_block.bn2 = new_bn
+                        
+                        print(f"Adjusted {second_conv_name}: {orig_conv.out_channels} -> {new_out_channels} filters")
+                        
+                    # Handle the downsample layer if present
+                    if hasattr(orig_block, 'downsample') and orig_block.downsample is not None:
+                        orig_downsample = orig_block.downsample[0]  # Downsample's conv
+                        in_pruned = pruned_filters_by_module.get(f"{layer_name}.{block_idx-1}.conv2" if block_idx > 0 else "conv1", [])
+                        out_pruned = pruned_filters_by_module.get(f"{layer_name}.{block_idx}.conv2", [])
+                        
+                        if in_pruned or out_pruned:
+                            # Calculate new dimensions for downsample
+                            new_in_channels = orig_downsample.in_channels - len(in_pruned) if in_pruned else orig_downsample.in_channels
+                            new_out_channels = orig_downsample.out_channels - len(out_pruned) if out_pruned else orig_downsample.out_channels
+                            
+                            # Create new downsample conv
+                            new_downsample = nn.Conv2d(
+                                new_in_channels,
+                                new_out_channels,
+                                kernel_size=orig_downsample.kernel_size,
+                                stride=orig_downsample.stride,
+                                padding=orig_downsample.padding,
+                                bias=(orig_downsample.bias is not None)
+                            )
+                            
+                            # Copy weights for kept filters
+                            in_keep_indices = [i for i in range(orig_downsample.in_channels) if i not in in_pruned]
+                            out_keep_indices = [i for i in range(orig_downsample.out_channels) if i not in out_pruned]
+                            
+                            for i, out_idx in enumerate(out_keep_indices):
+                                for j, in_idx in enumerate(in_keep_indices):
+                                    if j < len(in_keep_indices) and in_idx < orig_downsample.weight.data.shape[1]:
+                                        new_downsample.weight.data[i, j] = orig_downsample.weight.data[out_idx, in_idx]
+                                
+                                if orig_downsample.bias is not None:
+                                    new_downsample.bias.data[i] = orig_downsample.bias.data[out_idx]
+                            
+                            # Create new downsample sequence
+                            new_downsample_seq = nn.Sequential(
+                                new_downsample,
+                                nn.BatchNorm2d(new_out_channels)
+                            )
+                            
+                            # Copy batch norm parameters
+                            orig_bn = orig_block.downsample[1]
+                            new_bn = new_downsample_seq[1]
+                            
+                            for i, idx in enumerate(out_keep_indices):
+                                new_bn.weight.data[i] = orig_bn.weight.data[idx]
+                                new_bn.bias.data[i] = orig_bn.bias.data[idx]
+                                new_bn.running_mean.data[i] = orig_bn.running_mean.data[idx]
+                                new_bn.running_var.data[i] = orig_bn.running_var.data[idx]
+                                
+                            # Replace the downsample layer
+                            compact_block.downsample = new_downsample_seq
+                            
+                            print(f"Adjusted {layer_name}.{block_idx}.downsample: {orig_downsample.out_channels} -> {new_out_channels} filters")
+            
+            # Finally, adjust the fully-connected layer
+            if hasattr(model, 'fc'):
+                last_layer_name = "layer4.1.conv2"  # Last conv layer in ResNet18
+                if last_layer_name in pruned_filters_by_module:
+                    # Get the number of input features for the FC layer
+                    orig_fc = model.fc
+                    last_conv = getattr(compact_model.layer4[1], "conv2")
+                    
+                    # Get the number of output features from the last conv layer
+                    last_conv_features = last_conv.out_channels
+                    
+                    # Calculate the new number of input features for FC layer
+                    # Each filter in the last conv contributes to multiple features in the FC input
+                    feature_multiplier = orig_fc.in_features // model.layer4[1].conv2.out_channels
+                    new_in_features = last_conv_features * feature_multiplier
+                    
+                    # Create a new FC layer
+                    new_fc = nn.Linear(new_in_features, orig_fc.out_features)
+                    
+                    # Copy weights for the filters we're keeping
+                    # This is approximate as the exact mapping is complex after avgpool
+                    pruned_filters = pruned_filters_by_module[last_layer_name]
+                    kept_filters = [i for i in range(model.layer4[1].conv2.out_channels) if i not in pruned_filters]
+                    
+                    # For each kept filter, copy its contribution to the FC weights
+                    for i, kept_idx in enumerate(kept_filters):
+                        start_orig = kept_idx * feature_multiplier
+                        start_new = i * feature_multiplier
+                        
+                        for j in range(feature_multiplier):
+                            if start_orig + j < orig_fc.weight.data.shape[1] and start_new + j < new_fc.weight.data.shape[1]:
+                                new_fc.weight.data[:, start_new + j] = orig_fc.weight.data[:, start_orig + j]
+                    
+                    # Copy bias
+                    new_fc.bias.data = orig_fc.bias.data.clone()
+                    
+                    # Replace the FC layer
+                    compact_model.fc = new_fc
+                    
+                    print(f"Adjusted FC layer: {orig_fc.in_features} -> {new_in_features} input features")
+        
+        print(f"Created compact ResNet18 with pruned filters physically removed")
+        
+        # Print summary of model size changes
+        orig_params = sum(p.numel() for p in model.parameters())
+        compact_params = sum(p.numel() for p in compact_model.parameters())
+        reduction = (1 - compact_params / orig_params) * 100
+        
+        print(f"Original model parameters: {orig_params:,}")
+        print(f"Compact model parameters: {compact_params:,}")
+        print(f"Reduction: {reduction:.2f}%")
+        
+        return compact_model
+    else:
+        print(f"Error: Unsupported model type {model_type} for compact model creation")
+        return None
+
+def save_pruned_model(model, output_path, is_structural=False, architecture_info=None):
+    """Save pruned model to a file, with architecture info if it's a structural pruning."""
     try:
-        import torch
-        # Check if model is a state dict
-        if isinstance(model, dict) or hasattr(model, 'items'):
-            torch.save(model, output_path)
-            print(f"Pruned model state dictionary saved to {output_path}")
+        if is_structural and architecture_info is not None:
+            # Create a package with both model and info
+            save_dict = {
+                'model': model,
+                'model_info': architecture_info
+            }
+            
+            torch.save(save_dict, output_path)
+            print(f"Pruned model with architecture info saved to {output_path}")
         else:
+            # Regular save
             torch.save(model, output_path)
             print(f"Pruned model saved to {output_path}")
     except Exception as e:
         print(f"Error saving model: {e}")
+        import traceback
+        traceback.print_exc()
 
 def visualize_pruning(stats_df, filters_to_prune, output_path):
     """
@@ -435,6 +749,18 @@ def main():
                         help='Model architecture type')
     parser.add_argument('--prune-highest', action='store_true',
                         help='Prune filters with highest scores instead of lowest')
+    parser.add_argument('--structural-pruning', action='store_true',
+                        help='Perform structural pruning (physically remove filters) instead of zeroing out weights')
+    # Options for retraining (these will be passed to the retrain script)
+    parser.add_argument('--retrain', action='store_true',
+                        help='Retrain the model after pruning')
+    parser.add_argument('--data-dir', type=str, default=None,
+                        help='Path to training data directory')
+    parser.add_argument('--epochs', type=int, default=10,
+                        help='Number of epochs for retraining')
+    parser.add_argument('--batch-size', type=int, default=64,
+                        help='Batch size for retraining')
+    
     args = parser.parse_args()
 
     # Create output directory if it doesn't exist
@@ -467,18 +793,50 @@ def main():
         print("Error: Could not load original model. Exiting.")
         return
 
-    # Create pruned model
+    pruned_model_path = os.path.join(args.output, 'pruned_model.pth')
+
+    # Create pruned model based on chosen method
     print("Creating pruned model...")
-    pruned_model = create_pruned_model(original_model, filters_to_prune, args.model_type)
+    if args.structural_pruning:
+        pruned_model = create_compact_resnet(original_model, filters_to_prune, args.model_type)
+        pruning_method = "structural pruning (filters physically removed)"
+        
+        # Create architecture information
+        model_info = {
+            'pruning_method': 'structural',
+            'filters_pruned': len(filters_to_prune),
+            'original_params': sum(p.numel() for p in original_model.parameters()),
+            'pruned_params': sum(p.numel() for p in pruned_model.parameters()),
+        }
+        
+        # Add layer information
+        layer_info = []
+        for name, module in pruned_model.named_modules():
+            if isinstance(module, nn.Conv2d):
+                layer_info.append(f"{name}: {module.in_channels} in, {module.out_channels} out")
+        
+        model_info['layer_structure'] = layer_info
+        
+        # Save as JSON (keep this for backward compatibility)
+        with open(os.path.join(args.output, 'model_architecture.json'), 'w') as f:
+            json.dump(model_info, f, indent=2)
+        
+        # Save model with architecture info
+        save_pruned_model(pruned_model, pruned_model_path, is_structural=True, architecture_info=model_info)
+    else:
+        pruned_model = create_pruned_model(original_model, filters_to_prune, args.model_type)
+        pruning_method = "weight zeroing (filters zeroed out)"
+        save_pruned_model(pruned_model, pruned_model_path)
     
     if pruned_model is None:
         print("Error: Could not create pruned model. Exiting.")
         return
     
-    # Save the pruned model
+    # Save the pruned model before retraining
     pruned_model_path = os.path.join(args.output, 'pruned_model.pth')
     save_pruned_model(pruned_model, pruned_model_path)
-
+    print(f"Pruned model saved to {pruned_model_path}")
+    
     # Visualize pruning
     visualize_pruning(
         stats_df,
@@ -500,10 +858,63 @@ def main():
 
     pruning_type = "highest-scoring" if args.prune_highest else "lowest-scoring"
     print(f"\nPruned {len(filters_to_prune)} {pruning_type} filters out of {len(stats_df)} total filters")
-    print(f"Pruning details saved to {os.path.join(args.output, 'pruned_filters.txt')}")
-    print(f"Pruned model saved to {pruned_model_path}")
-    print(f"\nUse evaluate_models.py to test the performance of your pruned model")
+    print(f"Pruning method: {pruning_method}")
+    
+    # Save model architecture information to help with evaluation
+    if args.structural_pruning:
+        model_info = {
+            'pruning_method': 'structural',
+            'filters_pruned': len(filters_to_prune),
+            'original_params': sum(p.numel() for p in original_model.parameters()),
+            'pruned_params': sum(p.numel() for p in pruned_model.parameters()),
+        }
+        
+        # Save a summary of layer changes
+        layer_info = []
+        for name, module in pruned_model.named_modules():
+            if isinstance(module, nn.Conv2d):
+                layer_info.append(f"{name}: {module.in_channels} in, {module.out_channels} out")
+        
+        model_info['layer_structure'] = layer_info
+        
+        # Save as JSON
+        with open(os.path.join(args.output, 'model_architecture.json'), 'w') as f:
+            json.dump(model_info, f, indent=2)
+    
+    # If retraining is requested, call the retrain script
+    if args.retrain:
+        if args.data_dir is None:
+            print("Error: Must provide --data-dir for retraining. Skipping retraining step.")
+        else:
+            print("\nRetraining requested. Launching retrain_model.py...")
+            import subprocess
+            
+            # Construct the retrain command
+            retrain_cmd = [
+                "python", f"{current_dir}/retrain_model.py",
+                "--model", pruned_model_path,
+                "--data-dir", args.data_dir,
+                "--output", args.output,
+                "--epochs", str(args.epochs),
+                "--batch-size", str(args.batch_size)
+            ]
+            
+            # Execute the retraining command
+            print(f"Running: {' '.join(retrain_cmd)}")
+            try:
+                subprocess.run(retrain_cmd, check=True)
+                print("Retraining completed successfully!")
+            except subprocess.CalledProcessError:
+                print("Error during retraining process.")
+            
+            print("\nEvaluation instructions:")
+            print(f"  To evaluate pruned (non-retrained) model: python src/analysis/evaluate_models.py --original {args.model} --pruned {pruned_model_path} --data [test_data_folder]")
+            print(f"  To evaluate retrained model: python src/analysis/evaluate_models.py --original {args.model} --pruned {os.path.join(args.output, 'retrained_model.pth')} --data [test_data_folder]")
+    else:
+        print("\nEvaluation instructions:")
+        print(f"  To evaluate pruned model: python src/analysis/evaluate_models.py --original {args.model} --pruned {pruned_model_path} --data [test_data_folder]")
+    
+    print("\nDone!")
 
 if __name__ == "__main__":
     main()
-    

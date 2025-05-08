@@ -1,0 +1,28 @@
+{
+  "pruning_method": "structural",
+  "filters_pruned": 195,
+  "original_params": 11689512,
+  "pruned_params": 10712919,
+  "layer_structure": [
+    "conv1: 3 in, 64 out",
+    "layer1.0.conv1: 64 in, 64 out",
+    "layer1.0.conv2: 64 in, 64 out",
+    "layer1.1.conv1: 64 in, 64 out",
+    "layer1.1.conv2: 64 in, 64 out",
+    "layer2.0.conv1: 64 in, 126 out",
+    "layer2.0.conv2: 126 in, 124 out",
+    "layer2.0.downsample.0: 64 in, 124 out",
+    "layer2.1.conv1: 128 in, 122 out",
+    "layer2.1.conv2: 122 in, 118 out",
+    "layer3.0.conv1: 128 in, 245 out",
+    "layer3.0.conv2: 245 in, 229 out",
+    "layer3.0.downsample.0: 128 in, 229 out",
+    "layer3.1.conv1: 256 in, 229 out",
+    "layer3.1.conv2: 229 in, 247 out",
+    "layer4.0.conv1: 256 in, 460 out",
+    "layer4.0.conv2: 460 in, 495 out",
+    "layer4.0.downsample.0: 256 in, 495 out",
+    "layer4.1.conv1: 512 in, 485 out",
+    "layer4.1.conv2: 485 in, 509 out"
+  ]
+}

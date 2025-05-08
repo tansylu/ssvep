@@ -24,7 +24,7 @@ except ImportError:
 
 def load_model(model_path, device='cpu', model_type='resnet18'):
     """
-    Load a model from file, handling both full models and state dictionaries.
+    Load a model from file, handling both full models, state dictionaries, and structurally pruned models.
     
     Args:
         model_path: Path to model file
@@ -38,25 +38,58 @@ def load_model(model_path, device='cpu', model_type='resnet18'):
         # Load model file
         model_data = torch.load(model_path, map_location=device)
         
-        # Check if model is a state dictionary
-        is_state_dict = isinstance(model_data, dict) or hasattr(model_data, 'items')
-        
-        if is_state_dict:
-            print(f"Loading state dict into {model_type} architecture...")
-            
-            # Create model architecture
-            if model_type == 'resnet18':
-                model = models.resnet18(weights=None)
-            elif model_type == 'resnet50':
-                model = models.resnet50(weights=None)
-            else:
-                raise ValueError(f"Unsupported model type: {model_type}")
-            
-            # Load weights
-            model.load_state_dict(model_data, strict=False)
-        else:
-            # Already a full model
+        # Check if model is already a PyTorch model
+        if isinstance(model_data, torch.nn.Module):
+            print(f"Loaded complete model from {model_path}")
             model = model_data
+        else:
+            # Check if it's a state dictionary
+            is_state_dict = isinstance(model_data, dict) and 'model_info' not in model_data
+            is_pruned_package = isinstance(model_data, dict) and 'model_info' in model_data
+            
+            if is_pruned_package:
+                print(f"Loading structurally pruned model with custom architecture...")
+                # Extract the model and its info
+                model_dict = model_data['model_state_dict'] if 'model_state_dict' in model_data else model_data['model']
+                model_info = model_data['model_info']
+                
+                # Use the stored info to load the model directly
+                model = model_data['model'] if 'model' in model_data else None
+                
+                if model is None:
+                    print("Warning: Structurally pruned model architecture not included in the file.")
+                    print("This may cause channel mismatches. Consider re-pruning and saving the full model.")
+                    
+                    # Try to create standard model as fallback (likely to fail)
+                    if model_type == 'resnet18':
+                        model = models.resnet18(weights=None)
+                    elif model_type == 'resnet50':
+                        model = models.resnet50(weights=None)
+                    else:
+                        raise ValueError(f"Unsupported model type: {model_type}")
+                        
+                    try:
+                        model.load_state_dict(model_dict, strict=False)
+                    except Exception as e:
+                        print(f"Error loading pruned model weights: {e}")
+                        print("This is expected with structurally pruned models without architecture info.")
+            
+            elif is_state_dict:
+                print(f"Loading state dict into {model_type} architecture...")
+                
+                # Create model architecture
+                if model_type == 'resnet18':
+                    model = models.resnet18(weights=None)
+                elif model_type == 'resnet50':
+                    model = models.resnet50(weights=None)
+                else:
+                    raise ValueError(f"Unsupported model type: {model_type}")
+                
+                # Load weights
+                model.load_state_dict(model_data, strict=False)
+            else:
+                # Unknown format
+                raise ValueError(f"Unknown model format: {type(model_data)}")
             
         model = model.to(device)
         model.eval()
@@ -502,6 +535,89 @@ def compare_two_models(model1_path, model2_path, test_folder, device='cpu',
         traceback.print_exc()
         return None
 
+def inspect_model_architecture(model_path, device='cpu'):
+    """
+    Load and inspect a model's architecture, showing layer dimensions.
+    
+    Args:
+        model_path: Path to model file
+        device: Device to load model to
+    
+    Returns:
+        Loaded model
+    """
+    try:
+        # Load model
+        model_data = torch.load(model_path, map_location=device)
+        
+        if isinstance(model_data, dict) and 'model' in model_data:
+            model = model_data['model']
+        else:
+            model = model_data
+        
+        # Set to eval mode
+        model = model.to(device)
+        model.eval()
+        
+        # Print model architecture
+        print("\n=== MODEL ARCHITECTURE INSPECTION ===")
+        for name, module in model.named_modules():
+            if isinstance(module, torch.nn.Conv2d):
+                print(f"{name}: in_channels={module.in_channels}, "
+                      f"out_channels={module.out_channels}, "
+                      f"kernel_size={module.kernel_size}")
+            elif isinstance(module, torch.nn.Linear):
+                print(f"{name}: in_features={module.in_features}, "
+                      f"out_features={module.out_features}")
+                
+        # Test data flow through the network
+        print("\n=== DATA FLOW TEST ===")
+        try:
+            # Create test input
+            test_input = torch.randn(1, 3, 224, 224).to(device)
+            
+            # Hook to track tensor shapes through the model
+            shapes = {}
+            hooks = []
+            
+            def track_shape(name):
+                def hook(module, input, output):
+                    shapes[name] = {
+                        'input_shape': [x.shape if x is not None else None for x in input],
+                        'output_shape': output.shape
+                    }
+                return hook
+            
+            # Register hooks
+            for name, module in model.named_modules():
+                if isinstance(module, (torch.nn.Conv2d, torch.nn.Linear, torch.nn.BatchNorm2d)):
+                    hooks.append(module.register_forward_hook(track_shape(name)))
+            
+            # Run test input through model
+            with torch.no_grad():
+                output = model(test_input)
+            
+            # Print shapes
+            for name, shape_info in shapes.items():
+                print(f"{name}:")
+                print(f"  Input: {shape_info['input_shape']}")
+                print(f"  Output: {shape_info['output_shape']}")
+            
+            # Clean up hooks
+            for hook in hooks:
+                hook.remove()
+                
+        except Exception as e:
+            print(f"Error during data flow test: {e}")
+        
+        return model
+        
+    except Exception as e:
+        print(f"Error inspecting model: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Model Evaluation Tool')
     parser.add_argument('--model', type=str, required=True, help='Path to model file')
@@ -513,6 +629,8 @@ if __name__ == "__main__":
     parser.add_argument('--output', type=str, default='evaluation_results', help='Output directory')
     parser.add_argument('--compare', type=str, default=None, help='Path to second model for comparison')
     parser.add_argument('--plot-pruning', action='store_true', help='Plot pruning performance curve')
+    parser.add_argument('--custom-arch', action='store_true', help='Load as custom architecture model (for structurally pruned models)')
+    parser.add_argument('--inspect', action='store_true', help='Inspect model architecture (useful for debugging pruned models)')
     parser.add_argument('--device', type=str, default='cpu', help='Device for evaluation: cpu or cuda')
     
     args = parser.parse_args()
@@ -520,18 +638,37 @@ if __name__ == "__main__":
     # Create output directory
     os.makedirs(args.output, exist_ok=True)
     
-    # Load model
-    model = load_model(args.model, args.device, args.model_type)
+    # === 1. LOAD MODEL WITH APPROPRIATE APPROACH ===
+    if args.custom_arch:
+        print("Using custom architecture loading mode for structurally pruned models")
+        try:
+            # Direct load without standard model assumptions
+            model_data = torch.load(args.model, map_location=args.device)
+            if isinstance(model_data, dict) and 'model' in model_data:
+                model = model_data['model']
+            else:
+                model = model_data
+            model = model.to(args.device)
+            model.eval()
+            print(f"Loaded model with custom architecture from {args.model}")
+        except Exception as e:
+            print(f"Error loading model with custom architecture: {e}")
+            model = None
+    else:
+        model = load_model(args.model, args.device, args.model_type)
     
     if model is None:
+        print("Failed to load model. Exiting.")
         sys.exit(1)
     
-    # Test with single image
+    # === 2. TEST WITH SINGLE IMAGE ===
     if args.image:
+        print(f"\nTesting with single image: {args.image}")
         test_with_single_image(model, args.image, args.device)
     
-    # Test with image folder
+    # === 3. TEST WITH IMAGE FOLDER ===
     if args.data:
+        print(f"\nEvaluating on test dataset: {args.data}")
         metrics = test_image_folder(model, args.data, args.device)
         
         # Save results to file
@@ -550,8 +687,9 @@ if __name__ == "__main__":
                     
             print(f"Evaluation results saved to {result_path}")
     
-    # Compare with another model
+    # === 4. COMPARE WITH ANOTHER MODEL ===
     if args.compare and args.data:
+        print(f"\nComparing models:\n - Model 1: {args.model}\n - Model 2: {args.compare}")
         compare_two_models(
             args.model, args.compare, 
             args.data, args.device, 
@@ -559,8 +697,9 @@ if __name__ == "__main__":
             os.path.join(args.output, 'comparison')
         )
     
-    # Plot pruning performance curve
+    # === 5. PLOT PRUNING PERFORMANCE CURVE ===
     if args.plot_pruning and args.data and args.stats:
+        print(f"\nPlotting pruning performance curve")
         # Load filter statistics
         try:
             stats_df = pd.read_csv(args.stats)
@@ -577,3 +716,11 @@ if __name__ == "__main__":
             )
         except Exception as e:
             print(f"Error loading statistics or plotting: {e}")
+            import traceback
+            traceback.print_exc()
+
+    # === 6. INSPECT ===
+    if args.inspect:
+        print("\nInspecting model architecture...")
+        inspect_model_architecture(args.model, args.device)
+        sys.exit(0)  # Exit after inspection

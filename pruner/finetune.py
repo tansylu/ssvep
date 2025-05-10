@@ -63,7 +63,7 @@ def create_importance_scores_from_csv(stats_df, model):
                 filter_idx = int(row["Filter"])
                 if filter_idx < module.out_channels:
                     # Lower score means higher importance (we'll use 1 - similarity)
-                    scores[filter_idx] = 1.0 - float(row["Avg Similarity Score"])
+                    scores[filter_idx] = float(row["Avg Similarity Score"])
 
             importance_dict[module] = scores
 

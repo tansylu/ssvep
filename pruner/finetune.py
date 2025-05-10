@@ -147,7 +147,7 @@ def main():
         round_to=round_to,
     )
 
-    # Print model info before pruning
+    # Print model infoö before pruning
     base_stats = tp.utils.count_ops_and_params(model, example_inputs)
     base_macs, base_nparams = base_stats[0], base_stats[1]
     print(f"Before pruning: {base_macs/1e9:.2f} GMACs, {base_nparams/1e6:.2f}M parameters")
@@ -189,7 +189,13 @@ def main():
 
     # --- Fine-tuning ---
     criterion = nn.CrossEntropyLoss()
-    optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate, momentum=0.9)
+    optimizer = torch.optim.SGD(
+    model.parameters(),
+    lr=1e-2,              # Start higher to help recovery after pruning
+    momentum=0.9,
+    weight_decay=5e-4     # Helps generalization
+        )
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.1)
 
     train_acc_list, val_acc_list = [], []
 
@@ -223,6 +229,7 @@ def main():
         val_acc = 100. * correct / total
         val_acc_list.append(val_acc)
 
+        scheduler.step()
         print(f"Epoch [{epoch+1}/{num_epochs}] Loss: {running_loss:.4f} | Train Acc: {train_acc:.2f}% | Val Acc: {val_acc:.2f}%")
 
     # --- Save final model ---

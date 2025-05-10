@@ -10,15 +10,16 @@ from torch.utils.data import DataLoader
 import matplotlib.pyplot as plt
 
 # --- CONFIG ---
-csv_path = "data/filter_stats (2).csv"
-pth_path = "data/models/resnet18.pth"
-data_dir = "data/tiny-imagenet-200"
-batch_size = 64
-num_epochs = 10
-learning_rate = 1e-3
-pruning_ratio = 0.3  # Percentage of filters to prune
-round_to = 8  # Round channels to multiples of 8 for better hardware acceleration
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+# Default values that can be overridden by command line arguments
+default_csv_path = "data/stats/filter_stats.csv"
+default_pth_path = "data/models/resnet18.pth"
+default_data_dir = "data/10k-imagenet"
+default_batch_size = 64
+default_num_epochs = 10
+default_learning_rate = 1e-3
+default_pruning_ratio = 0.1
+default_round_to = 8
+default_output_dir = "pruned_outputs"
 
 # --- Load CSV ---
 def load_filter_stats(stats_file):
@@ -83,20 +84,47 @@ class CSVImportance(tp.importance.Importance):
             scores = self.importance_dict[root_module]
             # Return the scores for the channels in this group
             return scores
-        else:
-            # If no scores available, return ones (neutral importance)
-            return torch.ones(root_module.out_channels)
 
 def main():
+    # --- Parse command line arguments ---
+    import argparse
+    parser = argparse.ArgumentParser(description="Prune and finetune ResNet model")
+    parser.add_argument("--percentage", type=float, default=default_pruning_ratio, help="Percentage of filters to prune (0-1)")
+    parser.add_argument("--output-dir", type=str, default=default_output_dir, help="Output directory for pruned models")
+    parser.add_argument("--csv", type=str, default=default_csv_path, help="Path to filter statistics CSV")
+    parser.add_argument("--model", type=str, default=default_pth_path, help="Path to model file")
+    parser.add_argument("--data-dir", type=str, default=default_data_dir, help="Path to dataset directory")
+    parser.add_argument("--epochs", type=int, default=default_num_epochs, help="Number of epochs for fine-tuning")
+    parser.add_argument("--batch-size", type=int, default=default_batch_size, help="Batch size for training")
+    parser.add_argument("--learning-rate", type=float, default=default_learning_rate, help="Learning rate for optimizer")
+    parser.add_argument("--round-to", type=int, default=default_round_to, help="Round channels to multiples of this value")
+    parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu", 
+                        help="Device to use (cuda/cpu)")
+    args = parser.parse_args()
+
+    # Use the arguments directly instead of global variables
+    pruning_ratio = args.percentage
+    batch_size = args.batch_size
+    num_epochs = args.epochs
+    learning_rate = args.learning_rate
+    round_to = args.round_to
+    device = torch.device(args.device)
+    # Create output directory with percentage subfolder
+    percentage_str = f"{int(pruning_ratio * 100)}"
+    output_path = os.path.join(args.output_dir, f"pruned_retrained_{percentage_str}")
+    os.makedirs(output_path, exist_ok=True)
+
+    print(f"Pruning {pruning_ratio*100:.1f}% of filters and saving to {output_path}")
+
     # --- Load pretrained model ---
     model = torchvision.models.resnet18()
-    state_dict = torch.load(pth_path, map_location="cpu", weights_only=False)
+    state_dict = torch.load(args.model, map_location="cpu", weights_only=False)
     model.load_state_dict(state_dict)
     model.to(device)
 
     # --- Prune filters ---
     print("Pruning filters...")
-    stats_df = load_filter_stats(csv_path)
+    stats_df = load_filter_stats(args.csv)
     example_inputs = torch.randn(1, 3, 224, 224).to(device)
 
     # Create importance scores from CSV
@@ -135,13 +163,26 @@ def main():
 
     # --- Dataloaders (upsample to 224x224) ---
     transform = transforms.Compose([
-        transforms.Resize(224),
+        transforms.Resize((224,224)),
         transforms.ToTensor(),
         transforms.Normalize([0.485, 0.456, 0.406],
                             [0.229, 0.224, 0.225])
     ])
-    train_dataset = datasets.ImageFolder(os.path.join(data_dir, "train"), transform=transform)
-    val_dataset = datasets.ImageFolder(os.path.join(data_dir, "val"), transform=transform)
+
+    # For 10k-imagenet, we need to create a train/val split
+    # since it only has a single directory
+    train_dir = os.path.join(args.data_dir, "imagenet_subtrain")
+
+    # Create a dataset from the train directory
+    full_dataset = datasets.ImageFolder(train_dir, transform=transform)
+
+    # Split into train and validation sets (80/20 split)
+    train_size = int(0.8 * len(full_dataset))
+    val_size = len(full_dataset) - train_size
+    train_dataset, val_dataset = torch.utils.data.random_split(
+        full_dataset, [train_size, val_size]
+    )
+
     # Use fewer workers to avoid multiprocessing issues
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=0)
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=0)
@@ -186,8 +227,9 @@ def main():
 
     # --- Save final model ---
     model.zero_grad()  # Clear gradients to reduce file size
-    torch.save(model, "resnet18_pruned_finetuned.pth")  # Save the entire model (structure + weights)
-    print("Model saved to resnet18_pruned_finetuned.pth")
+    model_save_path = os.path.join(output_path, f"resnet18_pruned_{percentage_str}pct.pth")
+    torch.save(model, model_save_path)  # Save the entire model (structure + weights)
+    print(f"Model saved to {model_save_path}")
 
     # --- Plot accuracy ---
     plt.figure(figsize=(10, 6))
@@ -195,11 +237,20 @@ def main():
     plt.plot(val_acc_list, label="Validation Accuracy")
     plt.xlabel("Epoch")
     plt.ylabel("Accuracy (%)")
-    plt.title("Accuracy over Fine-Tuning Epochs")
+    plt.title(f"Accuracy over Fine-Tuning Epochs ({percentage_str}% Pruning)")
     plt.legend()
     plt.grid()
-    plt.savefig("accuracy_plot.png")
-    plt.show()
+    plt.savefig(os.path.join(output_path, f"accuracy_plot_{percentage_str}pct.png"))
+
+    # Save training history as CSV
+    history_df = pd.DataFrame({
+        'epoch': range(1, num_epochs + 1),
+        'train_acc': train_acc_list,
+        'val_acc': val_acc_list
+    })
+    history_df.to_csv(os.path.join(output_path, f"training_history_{percentage_str}pct.csv"), index=False)
+
+    print(f"Training completed for {percentage_str}% pruning. Final validation accuracy: {val_acc:.2f}%")
 
 if __name__ == "__main__":
     # This block is required for proper multiprocessing on Windows and macOS

@@ -6,6 +6,7 @@ vgg16_weights_tf_dim_ordering_tf_kernels.h5
 *.csv
 imgs/
 imgs*/
+tiny-imagenet-200/
 #ignore the pictures folder
 filter_comparison/
 spectr*/

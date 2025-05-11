@@ -1,0 +1,19 @@
+# Filters to prune
+# Format: layer_id,filter_id
+# Each line contains a layer ID and filter ID to prune
+# Original data included scores, but only the layer and filter IDs are used by the pruning script
+
+# Layer 6 filters
+6,54    
+6,99   
+
+# Layer 8 filters
+8,102   
+8,113  
+
+# Layer 11 filters
+11,177  
+11,179  
+
+# Layer 13 filters
+13,245  

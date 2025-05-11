@@ -3,46 +3,95 @@ import torch
 import torch.nn as nn
 import torchvision
 import torchvision.transforms as transforms
-from torch.utils.data import Dataset, DataLoader
-import pandas as pd
+from torch.utils.data import Dataset, DataLoader, random_split
 import matplotlib.pyplot as plt
 from datasets import load_dataset
+import tempfile
+from pathlib import Path
+import torch.nn.utils.prune as prune
 
 # --- CONFIG ---
-csv_path = "data/filter_stats.csv"
+# Path to the text file containing filters to prune
+# Each line in the file should be in the format: "layer_id,filter_id"
+filters_file_path = "filters_to_prune.txt"
+
 pth_path = "data/models/resnet18.pth"
 dataset_name = "Prisma-Multimodal/segmented-imagenet1k-subset"  # Hugging Face dataset name
+# Cache directory for datasets - this will store the dataset locally after first download
+# so it won't be redownloaded on subsequent runs
+dataset_cache_dir = os.path.join(tempfile.gettempdir(), "hf_datasets_cache")
 batch_size = 64
 num_epochs = 10
 learning_rate = 5e-4  # Reduced learning rate for more stable training
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 checkpoint_dir = "checkpoints"  # Directory to save intermediate models
 
-# --- Load CSV ---
-def load_filter_stats(stats_file):
-    print(f"Loading filter statistics from {stats_file}")
+# Print GPU information
+if torch.cuda.is_available():
+    print(f"Using GPU: {torch.cuda.get_device_name(0)}")
+    print(f"GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.2f} GB")
+    # Don't set default tensor type to CUDA as it can cause issues with DataLoader
+    # Instead, we'll explicitly move tensors to the device when needed
+else:
+    print("No GPU available, using CPU")
+
+# --- Helper functions ---
+def read_filters_from_file(file_path):
+    """
+    Read filters to prune from a text file.
+
+    Args:
+        file_path: Path to the text file containing filters to prune
+
+    Returns:
+        List of (layer_id, filter_id) tuples
+
+    Format:
+        Each line in the file should be in the format: "layer_id,filter_id"
+        Lines starting with # are treated as comments and ignored
+        Empty lines are ignored
+    """
+    filters_to_prune = []
+
     try:
-        stats_df = pd.read_csv(stats_file)
-        print(f"Loaded statistics for {len(stats_df)} filters")
-        return stats_df
+        with open(file_path, 'r') as f:
+            for line in f:
+                # Skip comments and empty lines
+                line = line.strip()
+                if not line or line.startswith('#'):
+                    continue
+
+                try:
+                    # Parse the line as "layer_id,filter_id"
+                    parts = line.split(',')
+                    if len(parts) != 2:
+                        print(f"Warning: Invalid line format in {file_path}: '{line}'. Expected 'layer_id,filter_id'")
+                        continue
+
+                    layer_id = int(parts[0].strip())
+                    filter_id = int(parts[1].strip())
+                    filters_to_prune.append((layer_id, filter_id))
+                except ValueError as e:
+                    print(f"Warning: Error parsing line in {file_path}: '{line}'. {str(e)}")
+                    continue
+
+        print(f"Read {len(filters_to_prune)} filters to prune from {file_path}")
+    except FileNotFoundError:
+        print(f"Warning: Filters file not found: {file_path}")
     except Exception as e:
-        print(f"Error loading filter statistics: {e}")
-        return None
+        print(f"Error reading filters file {file_path}: {str(e)}")
 
-def create_importance_scores_from_csv(stats_df, model):
-    """Create a dictionary mapping layers to their filter importance scores"""
-    required_columns = ["Layer", "Filter", "Avg Similarity Score"]
-    alt_columns = {"Layer": "layer_id", "Filter": "filter_id", "Avg Similarity Score": "avg_similarity_score"}
+    return filters_to_prune
 
-    # Rename columns if needed
-    for req_col, alt_col in alt_columns.items():
-        if req_col not in stats_df.columns and alt_col in stats_df.columns:
-            stats_df = stats_df.rename(columns={alt_col: req_col})
-
-    if any(col not in stats_df.columns for col in required_columns):
-        print("Missing required columns after rename.")
-        return {}
-
+# --- Helper functions for model layer mapping ---
+def get_model_layer_mapping(model):
+    """
+    Create a mapping of layer IDs to actual model modules using the custom indexing scheme.
+    Returns:
+    - conv_layers: List of (name, module, layer_id) tuples
+    - layer_id_to_module: Dictionary mapping layer_id to module
+    - module_to_layer_id: Dictionary mapping module to layer_id
+    """
     # Get all Conv2d layers with their names, using the same indexing scheme as in src/core/model.py
     # In this scheme, we skip downsample layers when registering hooks, but layer IDs still follow the full sequence
     conv_layers = []
@@ -78,100 +127,133 @@ def create_importance_scores_from_csv(stats_df, model):
         else:
             print(f"Skipped  | {name:30s} | {'Yes' if is_downsample else 'No ':11s} | {filter_count:4d}")
 
-    # Create a mapping table for your reference
-    print("\nLayer ID Mapping (Your CSV Layer ID -> Model Layer):")
-    print("CSV ID | Model Layer Name")
-    print("-" * 30)
-    for i in range(20):  # Assuming you have up to 20 layers
-        matching_layers = [(name, m) for name, m, idx in conv_layers if isinstance(idx, int) and idx == i]
-        if matching_layers:
-            print(f"{i:6d} | {matching_layers[0][0]}")
+    # Create dictionaries for easy lookup
+    layer_id_to_module = {}
+    module_to_layer_id = {}
+
+    for name, module, idx in conv_layers:
+        if isinstance(idx, int):  # Only include non-skipped layers
+            layer_id_to_module[idx] = module
+            module_to_layer_id[module] = idx
+
+    return conv_layers, layer_id_to_module, module_to_layer_id
+
+# --- Define HFDataset class ---
+class HFDataset(Dataset):
+    def __init__(self, hf_dataset, transform=None):
+        self.dataset = hf_dataset
+        self.transform = transform
+        # Get class names from dataset features if available
+        if hasattr(self.dataset, 'features') and 'label' in self.dataset.features:
+            self.classes = self.dataset.features['label'].names
         else:
-            if i in [7, 12, 17]:  # Downsample layers
-                print(f"{i:6d} | Downsample layer (skipped)")
+            # Otherwise try to get unique labels from available label fields
+            label_field = None
+            for field in ['label', 'class', 'imagenet_label']:
+                if field in self.dataset.column_names:
+                    label_field = field
+                    break
+
+            if label_field:
+                # Sort the classes to ensure consistent mapping between runs
+                self.classes = sorted(list(set(self.dataset[label_field])))
             else:
-                print(f"{i:6d} | Not found")
+                print("Warning: No label field found in dataset. Using default 1000 classes.")
+                self.classes = list(range(1000))
 
-    # Create importance scores dictionary
-    importance_dict = {}
+    def get_class_to_idx(self, class_name):
+        """Helper method to get the index of a class by name"""
+        if isinstance(class_name, str):
+            # Try direct lookup first
+            try:
+                # Convert all classes to strings for comparison if needed
+                class_list = [str(c) for c in self.classes]
+                return class_list.index(class_name)
+            except ValueError:
+                # If that fails, try string comparison
+                for i, c in enumerate(self.classes):
+                    if str(c) == class_name:
+                        return i
+                # If we get here, the class wasn't found
+                raise ValueError(f"Class '{class_name}' not found in class list")
 
-    # Create a mapping from layer indices in CSV to actual model modules
-    layer_mapping = {}
+        # If it's not a string but a number, make sure it's within valid range
+        if isinstance(class_name, (int, float)):
+            class_idx = int(class_name)
+            if class_idx < 0 or class_idx >= len(self.classes):
+                print(f"Warning: Label {class_idx} is out of range [0, {len(self.classes)-1}]")
+                # Use a default label (0) to avoid crashing
+                return 0
+            return class_idx
 
-    # Count the number of actual layers (excluding skipped ones)
-    actual_layer_count = sum(1 for _, _, idx in conv_layers if isinstance(idx, int))
+        return class_name  # Return as is for other types
 
-    # Check if we need to adjust the layer indices
-    max_layer_idx = stats_df["Layer"].max()
-    if max_layer_idx >= actual_layer_count:
-        print(f"\nWARNING: CSV contains layer indices up to {max_layer_idx}, but model only has {actual_layer_count} non-downsample Conv2d layers.")
-        print("Attempting to create a mapping between CSV layer indices and model layers...")
+    def get_classes(self):
+        """Return the list of classes"""
+        return self.classes
 
-        # Try to create a mapping based on layer sizes
-        layer_sizes = {}
-        for layer_idx, layer_df in stats_df.groupby("Layer"):
-            max_filter_idx = layer_df["Filter"].max()
-            layer_sizes[layer_idx] = max_filter_idx + 1  # +1 because indices are 0-based
+    def __len__(self):
+        return len(self.dataset)
 
-        # Create a direct 1:1 mapping between CSV layer indices and model layer indices
-        # This assumes that your CSV layer indices follow the same scheme as the model layer indices
-        print("\nCreating direct 1:1 mapping between CSV layer indices and model layer indices")
+    def __getitem__(self, idx):
+        item = self.dataset[idx]
 
-        # Get all valid layer indices in the model
-        valid_indices = [idx for _, _, idx in conv_layers if isinstance(idx, int)]
-
-        # Map each CSV layer index directly to the corresponding model layer index if it exists
-        for layer_idx in sorted(layer_sizes.keys()):
-            if layer_idx in valid_indices:
-                # Direct mapping - CSV layer index matches model layer index
-                layer_mapping[layer_idx] = layer_idx
-
-                # Find the corresponding layer name
-                matching_layers = [(name, m) for name, m, idx in conv_layers if isinstance(idx, int) and idx == layer_idx]
-                if matching_layers:
-                    layer_name = matching_layers[0][0]
-                    layer_size = matching_layers[0][1].out_channels
-                    print(f"Mapped CSV layer {layer_idx} (size {layer_sizes[layer_idx]}) to model layer {layer_name} (index {layer_idx}, size {layer_size})")
-            else:
-                # If the layer index doesn't exist in the model (e.g., downsample layers), skip it
-                print(f"Skipping CSV layer {layer_idx} - no matching model layer index")
-
-    # Process each layer in the CSV
-    for layer_idx, layer_df in stats_df.groupby("Layer"):
-        # Determine which model layer to use
-        model_idx = layer_mapping.get(layer_idx, layer_idx)
-
-        # Find the corresponding layer in our custom indexed list
-        matching_layers = [(name, m) for name, m, idx in conv_layers if isinstance(idx, int) and idx == model_idx]
-
-        if matching_layers:
-            name, module = matching_layers[0]
-            print(f"\nProcessing CSV layer {layer_idx} -> model layer {model_idx} ({name})")
-
-            # Create tensor of importance scores for this layer
-            scores = torch.ones(module.out_channels)
-
-            # Fill in the scores from the dataframe
-            valid_filters = 0
-            for _, row in layer_df.iterrows():
-                filter_idx = int(row["Filter"])
-                if filter_idx < module.out_channels:
-                    # Lower similarity score means more redundant (directly use as importance)
-                    scores[filter_idx] = float(row["Avg Similarity Score"])
-                    valid_filters += 1
-
-            print(f"Assigned scores to {valid_filters} filters out of {module.out_channels}")
-            importance_dict[module] = scores
+        # --- Get image ---
+        if 'image' in item:
+            image = item['image']
+        elif 'img' in item:
+            image = item['img']
         else:
-            print(f"WARNING: Layer index {layer_idx} (mapped to {model_idx}) not found in model layers.")
+            raise ValueError("Dataset doesn't contain 'image' or 'img' field")
 
-    return importance_dict
+        # --- Get label (handle different naming conventions) ---
+        if 'label' in item:
+            label = item['label']
+        elif 'class' in item:
+            label = item['class']
+        elif 'imagenet_label' in item:
+            label = item['imagenet_label']
+        else:
+            raise ValueError("Dataset doesn't contain a recognized label field. Available fields: " + str(list(item.keys())))
 
-# We don't need the CSVImportance class since we're using unstructured pruning directly
+        if isinstance(label, str):
+            try:
+                # Use the helper method to get the class index
+                label = self.get_class_to_idx(label)
+            except ValueError as e:
+                print(f"Warning: Error converting label '{label}': {str(e)}")
+                # Use a default label (0) to avoid crashing
+                label = 0
+
+        # --- Convert label to scalar tensor ---
+        if isinstance(label, torch.Tensor):
+            if label.ndim > 0:
+                label = label[0].long()
+        elif isinstance(label, (list, tuple)):
+            label = torch.tensor(label[0], dtype=torch.long) if len(label) > 0 else torch.tensor(0, dtype=torch.long)
+        else:
+            label = torch.tensor(label, dtype=torch.long)
+
+        # Final validation to ensure label is within valid range
+        if label.item() < 0 or label.item() >= len(self.classes):
+            print(f"Warning: Final label {label.item()} is out of range [0, {len(self.classes)-1}]")
+            # Use a default label (0) to avoid crashing
+            label = torch.tensor(0, dtype=torch.long)
+
+        # --- Apply image transform ---
+        if self.transform:
+            image = self.transform(image)
+
+        return image, label
 
 # --- Load dataset using Hugging Face datasets ---
-def load_dataset_from_huggingface(dataset_name_or_path, split="train", transform=None):
-    """Load a dataset from Hugging Face datasets."""
+def load_dataset_from_huggingface(dataset_name_or_path, split="train", transform=None, cache_dir=None):
+    """Load a dataset from Hugging Face datasets.
+
+    This function uses the Hugging Face datasets library to load a dataset.
+    When cache_dir is provided, the dataset will be cached locally after the first download,
+    so it won't be redownloaded on subsequent runs, significantly improving performance.
+    """
     # Map split names to HF dataset splits
     split_mapping = {
         "train": "train",
@@ -181,293 +263,38 @@ def load_dataset_from_huggingface(dataset_name_or_path, split="train", transform
     # Load the dataset
     hf_split = split_mapping.get(split, split)
     try:
-        print(f"Loading dataset from Hugging Face Hub: {dataset_name_or_path}")
-        dataset = load_dataset(dataset_name_or_path, split=hf_split)
+        print(f"Loading dataset from Hugging Face Hub: {dataset_name_or_path}, split: {hf_split}")
+        # Use cache_dir if provided to avoid redownloading
+        dataset = load_dataset(dataset_name_or_path, split=hf_split, cache_dir=cache_dir)
+        print(f"Successfully loaded dataset with {len(dataset)} examples")
     except Exception as e:
         print(f"Error loading dataset: {e}")
         raise e
-
-    # Create a PyTorch dataset
-    class HFDataset(Dataset):
-        def __init__(self, hf_dataset, transform=None):
-            self.dataset = hf_dataset
-            self.transform = transform
-            # Get class names from dataset features if available
-            if hasattr(self.dataset, 'features') and 'label' in self.dataset.features:
-                self.classes = self.dataset.features['label'].names
-            else:
-                # Otherwise try to get unique labels from available label fields
-                label_field = None
-                for field in ['label', 'class', 'imagenet_label']:
-                    if field in self.dataset.column_names:
-                        label_field = field
-                        break
-
-                if label_field:
-                    # Sort the classes to ensure consistent mapping between runs
-                    self.classes = sorted(list(set(self.dataset[label_field])))
-                else:
-                    print("Warning: No label field found in dataset. Using default 1000 classes.")
-                    self.classes = list(range(1000))
-
-        def get_class_to_idx(self, class_name):
-            """Helper method to get the index of a class by name"""
-            if isinstance(class_name, str):
-                # Try direct lookup first
-                try:
-                    # Convert all classes to strings for comparison if needed
-                    class_list = [str(c) for c in self.classes]
-                    return class_list.index(class_name)
-                except ValueError:
-                    # If that fails, try string comparison
-                    for i, c in enumerate(self.classes):
-                        if str(c) == class_name:
-                            return i
-                    # If we get here, the class wasn't found
-                    raise ValueError(f"Class '{class_name}' not found in class list")
-
-            # If it's not a string but a number, make sure it's within valid range
-            if isinstance(class_name, (int, float)):
-                class_idx = int(class_name)
-                if class_idx < 0 or class_idx >= len(self.classes):
-                    print(f"Warning: Label {class_idx} is out of range [0, {len(self.classes)-1}]")
-                    # Use a default label (0) to avoid crashing
-                    return 0
-                return class_idx
-
-            return class_name  # Return as is for other types
-
-        def get_classes(self):
-            """Return the list of classes"""
-            return self.classes
-
-        def __len__(self):
-            return len(self.dataset)
-
-        def __getitem__(self, idx):
-            item = self.dataset[idx]
-
-            # --- Get image ---
-            if 'image' in item:
-                image = item['image']
-            elif 'img' in item:
-                image = item['img']
-            else:
-                raise ValueError("Dataset doesn't contain 'image' or 'img' field")
-
-            # --- Get label (handle different naming conventions) ---
-            if 'label' in item:
-                label = item['label']
-            elif 'class' in item:
-                label = item['class']
-            elif 'imagenet_label' in item:
-                label = item['imagenet_label']
-            else:
-                raise ValueError("Dataset doesn't contain a recognized label field. Available fields: " + str(list(item.keys())))
-
-            if isinstance(label, str):
-                try:
-                    # Use the helper method to get the class index
-                    label = self.get_class_to_idx(label)
-                except ValueError as e:
-                    print(f"Warning: Error converting label '{label}': {str(e)}")
-                    # Use a default label (0) to avoid crashing
-                    label = 0
-
-            # --- Convert label to scalar tensor ---
-            if isinstance(label, torch.Tensor):
-                if label.ndim > 0:
-                    label = label[0].long()
-            elif isinstance(label, (list, tuple)):
-                label = torch.tensor(label[0], dtype=torch.long) if len(label) > 0 else torch.tensor(0, dtype=torch.long)
-            else:
-                label = torch.tensor(label, dtype=torch.long)
-
-            # Final validation to ensure label is within valid range
-            if label.item() < 0 or label.item() >= len(self.classes):
-                print(f"Warning: Final label {label.item()} is out of range [0, {len(self.classes)-1}]")
-                # Use a default label (0) to avoid crashing
-                label = torch.tensor(0, dtype=torch.long)
-
-            # --- Apply image transform ---
-            if self.transform:
-                image = self.transform(image)
-
-            return image, label
 
     return HFDataset(dataset, transform)
 
 # --- Pruning and Fine-tuning ---
 def main():
-    # Load dataset to determine number of classes
-    try:
-        # Try to load a small portion of the validation dataset to get class info
-        # Using validation split since we'll be using it as our training set
-        temp_dataset = load_dataset_from_huggingface(dataset_name, split="validation")
-        num_classes = len(temp_dataset.classes)
-        print(f"Found {num_classes} classes in the dataset")
-    except Exception as e:
-        print(f"Warning: Could not determine number of classes from dataset: {e}")
-        print("Using default 1000 classes for ImageNet.")
-        num_classes = 1000
+    """Main function for pruning and fine-tuning.
 
-    # --- Load pretrained model ---
-    model = torchvision.models.resnet18(weights=None)
+    This implementation optimizes dataset loading by:
+    1. Using a persistent cache directory to store datasets after first download
+    2. Loading each dataset split only once and reusing it
+    3. Applying transforms to the cached datasets
 
-    # Modify the final fully connected layer to match the number of classes in your dataset
-    model.fc = nn.Linear(model.fc.in_features, num_classes)
+    This avoids redownloading the dataset on every run, significantly improving performance.
+    """
+    # Make sure we're using the GPU if available
+    if torch.cuda.is_available():
+        # Clear CUDA cache at the beginning to start with clean memory
+        torch.cuda.empty_cache()
+        print("Starting with clean GPU memory")
 
-    # Load pretrained weights
-    state_dict = torch.load(pth_path, map_location="cpu")
-    model.load_state_dict(state_dict, strict=False)  # strict=False to ignore fc layer mismatch
+    # Create cache directory if it doesn't exist
+    os.makedirs(dataset_cache_dir, exist_ok=True)
+    print(f"Using dataset cache directory: {dataset_cache_dir}")
 
-    model.to(device)
-
-    # --- Prune filters ---
-    print("Pruning filters...")
-
-    # Try to load filter statistics from CSV if available
-    stats_df = load_filter_stats(csv_path) if os.path.exists(csv_path) else None
-
-    # Instead of using structural pruning, let's implement unstructured pruning
-    # This will set weights to zero instead of removing filters, preserving the architecture
-    print("\nUsing unstructured pruning (weight masking) instead of structural pruning...")
-
-    # Function to apply unstructured pruning to convolutional layers
-    # Prune the bottom 10% of filters overall (across all layers)
-    def apply_unstructured_pruning(model, importance_dict, pruning_ratio=0.1):  # Default to 10%
-        pruned_filters_count = 0
-        total_filters_count = 0
-
-        # Get all Conv2d layers with their names, using the same indexing scheme as in src/core/model.py
-        # In this scheme, we skip downsample layers when registering hooks, but layer IDs still follow the full sequence
-        conv_layers = []
-        idx = 0
-
-        # Define the indices to skip (downsample layers)
-        skip_indices = [7, 12, 17]  # These are the downsample layers in your scheme
-
-        # First, collect all Conv2d layers
-        all_conv_layers = [(name, m) for name, m in model.named_modules() if isinstance(m, nn.Conv2d)]
-
-        # Then assign indices according to your scheme
-        for i, (name, m) in enumerate(all_conv_layers):
-            if 'downsample' in name:
-                # This is a downsample layer, mark it as skipped
-                conv_layers.append((f"skip_{i}", name, m))
-            else:
-                # This is a regular layer, assign the next available index that's not in skip_indices
-                while idx in skip_indices:
-                    idx += 1
-                conv_layers.append((idx, name, m))
-                idx += 1
-
-        # Create a reverse mapping from module to index and name
-        module_to_info = {module: (i, name) for i, name, module in conv_layers if isinstance(i, int)}
-
-        # Print summary of modules with importance scores
-        print("\nModules with importance scores:")
-        print("Layer ID | Layer Name | Filters | Min Score | Max Score")
-        print("-" * 70)
-
-        # Collect all scores from all layers into a single list
-        all_scores = []
-        all_module_indices = []  # To keep track of which module and filter each score belongs to
-
-        for module in importance_dict.keys():
-            if module in module_to_info:
-                idx, name = module_to_info[module]
-                scores = importance_dict[module]
-                min_score = scores.min().item()
-                max_score = scores.max().item()
-                filter_count = scores.shape[0]
-                print(f"Layer {idx:2d} | {name:30s} | {filter_count:6d} | {min_score:.4f} | {max_score:.4f}")
-
-                # Add scores to the global list
-                for filter_idx, score in enumerate(scores):
-                    all_scores.append(score.item())
-                    all_module_indices.append((module, filter_idx))
-
-                # Count total filters
-                total_filters_count += filter_count
-
-        # Calculate how many filters to prune overall
-        num_to_prune_overall = int(total_filters_count * pruning_ratio)
-        print(f"\nTotal filters: {total_filters_count}")
-        print(f"Pruning {num_to_prune_overall} filters overall (bottom {pruning_ratio*100:.1f}%)")
-
-        # Sort all scores to find the global threshold
-        sorted_scores = sorted(all_scores)
-        if num_to_prune_overall > 0 and num_to_prune_overall < len(sorted_scores):
-            global_threshold = sorted_scores[num_to_prune_overall - 1]
-        else:
-            global_threshold = -1  # No pruning if num_to_prune_overall is invalid
-
-        print(f"Global pruning threshold: {global_threshold:.4f} (filters with scores <= this value will be pruned)")
-
-        # Create a dictionary to track which filters to prune in each module
-        filters_to_prune = {module: [] for module in importance_dict.keys() if module in module_to_info}
-
-        # Identify filters to prune based on the global threshold
-        for i, score in enumerate(all_scores):
-            if score <= global_threshold:
-                module, filter_idx = all_module_indices[i]
-                if module in filters_to_prune:
-                    filters_to_prune[module].append(filter_idx)
-
-        # Apply pruning to each module
-        for module, filter_indices in filters_to_prune.items():
-            if module in module_to_info and filter_indices:
-                module_idx, name = module_to_info[module]
-                scores = importance_dict[module]
-
-                # Convert filter indices to tensor for easier manipulation
-                indices = torch.tensor(filter_indices, dtype=torch.long)
-
-                # Get pruned scores for reporting
-                pruned_scores = scores[indices]
-                min_score = scores.min().item()
-                max_score = scores.max().item()
-                avg_score = scores.mean().item()
-                pruned_min = pruned_scores.min().item()
-                pruned_max = pruned_scores.max().item()
-                pruned_avg = pruned_scores.mean().item()
-
-                print(f"\nPruning Layer {module_idx}: {name}")
-                print(f"All filters - Min: {min_score:.4f}, Max: {max_score:.4f}, Avg: {avg_score:.4f}")
-                print(f"Pruned filters - Min: {pruned_min:.4f}, Max: {pruned_max:.4f}, Avg: {pruned_avg:.4f}")
-
-                # Format the indices list for better readability
-                indices_list = indices.tolist()
-                if len(indices_list) > 20:
-                    # Show first 10 and last 10 if there are many indices
-                    indices_str = str(indices_list[:10])[:-1] + ", ... " + str(indices_list[-10:])[1:]
-                else:
-                    indices_str = str(indices_list)
-                print(f"Pruning {len(indices_list)} filters with indices: {indices_str}")
-
-                # Apply pruning by zeroing out weights
-                with torch.no_grad():
-                    for idx in indices_list:
-                        module.weight[idx].zero_()  # Set all weights for this filter to 0
-                        if module.bias is not None:
-                            module.bias[idx].zero_()  # Set bias to 0 as well
-                        pruned_filters_count += 1
-
-                print(f"Pruned {len(indices_list)} filters from Layer {module_idx}: {name} (kept {module.out_channels - len(indices_list)})")
-
-        print(f"\nPruning summary: Zeroed out {pruned_filters_count} of {total_filters_count} filters ({pruned_filters_count/total_filters_count*100:.2f}%)")
-
-    # Apply unstructured pruning
-    if stats_df is not None and not stats_df.empty:
-        # Create importance scores from CSV
-        importance_dict = create_importance_scores_from_csv(stats_df, model)
-        # Use default 10% pruning ratio (bottom 10% of filters)
-        apply_unstructured_pruning(model, importance_dict)
-    else:
-        print("No CSV data available for pruning. Skipping pruning step.")
-
-    # --- Dataloaders (upsample to 224x224) ---
+    # --- Define transforms for training and evaluation ---
     # Define transforms for training (with augmentation)
     train_transform = transforms.Compose([
         transforms.Lambda(lambda img: img.convert("RGB")),  # Ensure RGB
@@ -487,24 +314,158 @@ def main():
                              [0.229, 0.224, 0.225])
     ])
 
-    # Create datasets using Hugging Face datasets
-    # Swap training and validation sets to have a larger training set
-    print("Swapping training and validation sets to have a larger training set...")
+    # --- Load datasets once and reuse ---
+    print("Loading datasets from Hugging Face (will be cached for future runs)...")
+
+    # Load datasets once and reuse them
     try:
         # Use the validation set as training set (it has 50,000 examples)
-        train_dataset = load_dataset_from_huggingface(dataset_name, split="validation", transform=train_transform)
-        print(f"Loaded {len(train_dataset)} training images (from validation split)")
-    except Exception as e:
-        print(f"Error loading training dataset: {e}")
-        return
+        # Load without transform first to determine number of classes
+        validation_dataset = load_dataset_from_huggingface(
+            dataset_name,
+            split="validation",
+            cache_dir=dataset_cache_dir
+        )
+        num_classes = len(validation_dataset.classes)
+        print(f"Found {num_classes} classes in the dataset")
 
-    try:
-        # Use the training set as validation set (it has 10,000 examples)
-        val_dataset = load_dataset_from_huggingface(dataset_name, split="train", transform=eval_transform)
-        print(f"Loaded {len(val_dataset)} validation images (from train split)")
+        # Create training dataset with transform
+        train_dataset = HFDataset(validation_dataset.dataset, transform=train_transform)
+        train_dataset.classes = validation_dataset.classes  # Copy class information
+        print(f"Prepared {len(train_dataset)} training images (from validation split)")
+
+        # Load training set as validation set (it has 10,000 examples)
+        train_split_dataset = load_dataset_from_huggingface(
+            dataset_name,
+            split="train",
+            cache_dir=dataset_cache_dir
+        )
+
+        # Create validation dataset with transform
+        val_dataset = HFDataset(train_split_dataset.dataset, transform=eval_transform)
+        val_dataset.classes = train_split_dataset.classes  # Copy class information
+        print(f"Prepared {len(val_dataset)} validation images (from train split)")
     except Exception as e:
-        print(f"Error loading validation dataset: {e}")
-        return
+        print(f"Warning: Could not load datasets: {e}")
+        print("Using default 1000 classes for ImageNet.")
+        num_classes = 1000
+        return  # Exit if we can't load the datasets
+
+    # --- Load pretrained model ---
+    model = torchvision.models.resnet18(weights=None)
+
+    # First move the model to the target device
+    model = model.to(device)
+
+    # Modify the final fully connected layer to match the number of classes in your dataset
+    model.fc = nn.Linear(model.fc.in_features, num_classes).to(device)
+
+    # Load pretrained weights directly to the target device
+    try:
+        # First try loading with map_location=device
+        state_dict = torch.load(pth_path, map_location=device)
+        model.load_state_dict(state_dict, strict=False)  # strict=False to ignore fc layer mismatch
+    except RuntimeError as e:
+        print(f"Error loading model with map_location=device: {e}")
+        print("Trying alternative loading method...")
+
+        # If that fails, try loading to CPU first, then manually move each tensor to the device
+        state_dict = torch.load(pth_path, map_location='cpu')
+
+        # Manually move each tensor to the correct device
+        for key in state_dict:
+            state_dict[key] = state_dict[key].to(device)
+
+        model.load_state_dict(state_dict, strict=False)
+
+    print(f"Model loaded and moved to {device}")
+
+    # --- Prune filters ---
+    print("Pruning filters...")
+
+    # Read filters to prune from the text file
+    filters_to_prune = read_filters_from_file(filters_file_path)
+    print(f"\nUsing direct pruning with {len(filters_to_prune)} filters read from {filters_file_path}...")
+
+    # Function to apply unstructured pruning to specific filters
+    def apply_direct_pruning(model, filters_to_prune_list):
+        """
+        Apply pruning to specific filters in specific layers using PyTorch's pruning utilities.
+        
+        Args:
+            model: The PyTorch model to prune
+            filters_to_prune_list: List of (layer_id, filter_id) tuples to prune
+        """
+        if not filters_to_prune_list:
+            print("No filters specified for pruning. Skipping pruning step.")
+            return
+
+        # Get layer mapping
+        _, layer_id_to_module, _ = get_model_layer_mapping(model)
+
+        # Group filters by layer for more efficient pruning
+        filters_by_layer = {}
+        for layer_id, filter_id in filters_to_prune_list:
+            if layer_id not in filters_by_layer:
+                filters_by_layer[layer_id] = []
+            filters_by_layer[layer_id].append(filter_id)
+
+        # Count total filters to prune
+        total_to_prune = len(filters_to_prune_list)
+        pruned_count = 0
+
+        print(f"\nPruning {total_to_prune} filters as specified in the filters_to_prune list")
+
+        # Apply pruning to each layer
+        for layer_id, filter_ids in filters_by_layer.items():
+            if layer_id in layer_id_to_module:
+                module = layer_id_to_module[layer_id]
+
+                # Check if filter IDs are valid
+                valid_filter_ids = [f_id for f_id in filter_ids if f_id < module.out_channels]
+                invalid_count = len(filter_ids) - len(valid_filter_ids)
+
+                if invalid_count > 0:
+                    print(f"WARNING: {invalid_count} invalid filter IDs for layer {layer_id} (max valid ID: {module.out_channels-1})")
+
+                if valid_filter_ids:
+                    # Format the filter IDs list for better readability
+                    if len(valid_filter_ids) > 20:
+                        filter_ids_str = str(valid_filter_ids[:10])[:-1] + ", ... " + str(valid_filter_ids[-10:])[1:]
+                    else:
+                        filter_ids_str = str(valid_filter_ids)
+
+                    print(f"Pruning Layer {layer_id}: {len(valid_filter_ids)} filters with indices: {filter_ids_str}")
+
+                    # Create a mask where pruned filters are 0 and kept filters are 1
+                    mask = torch.ones_like(module.weight)
+                    for filter_id in valid_filter_ids:
+                        mask[filter_id] = 0
+                    
+                    # Apply custom pruning with the created mask
+                    prune.custom_from_mask(module, name='weight', mask=mask)
+                    
+                    # If there's a bias, prune it too
+                    if module.bias is not None and hasattr(module.bias, 'size'):
+                        bias_mask = torch.ones_like(module.bias)
+                        for filter_id in valid_filter_ids:
+                            if filter_id < bias_mask.size(0):
+                                bias_mask[filter_id] = 0
+                        prune.custom_from_mask(module, name='bias', mask=bias_mask)
+                    
+                    pruned_count += len(valid_filter_ids)
+                    print(f"Pruned {len(valid_filter_ids)} filters from Layer {layer_id} (kept {module.out_channels - len(valid_filter_ids)})")
+            else:
+                print(f"WARNING: Layer ID {layer_id} not found in model. Skipping {len(filter_ids)} filters.")
+
+        print(f"\nPruning summary: Applied masks to {pruned_count} filters as specified")
+        print("These filters will remain pruned during fine-tuning")
+
+    # Apply direct pruning using the list provided at the top of the file
+    apply_direct_pruning(model, filters_to_prune)
+
+    # --- Dataloaders ---
+    # Datasets have already been loaded and prepared with transforms
 
     # Ensure model's output layer matches the number of classes in the dataset
     if model.fc.out_features != len(train_dataset.classes):
@@ -515,16 +476,39 @@ def main():
     else:
         num_classes = model.fc.out_features
 
-    # Create DataLoader
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=0)
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=0)
+    # Create DataLoader with multiple workers and pin_memory for faster GPU transfer
+    num_workers = min(4, os.cpu_count() or 1)  # Use up to 4 workers or available CPU cores
+
+    # Create a generator for shuffling
+    # DataLoader with num_workers > 0 requires a CPU generator
+    g = torch.Generator()
+
+    # Seed the generator for reproducibility
+    g.manual_seed(42)
+
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=num_workers,
+        pin_memory=True if torch.cuda.is_available() else False,
+        generator=g
+    )
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=num_workers,
+        pin_memory=True if torch.cuda.is_available() else False,
+        generator=g  # Use the same generator for consistency
+    )
 
     # --- Fine-tuning ---
-    criterion = nn.CrossEntropyLoss()
+    criterion = nn.CrossEntropyLoss().to(device)  # Move loss function to GPU
     optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate, momentum=0.9)
 
     train_acc_list, val_acc_list = [], []
-    
+
     # Create checkpoint directory if it doesn't exist
     os.makedirs(checkpoint_dir, exist_ok=True)
     best_val_acc = 0.0
@@ -533,7 +517,7 @@ def main():
         model.train()
         correct, total, running_loss = 0, 0, 0.0
         for inputs, targets in train_loader:
-            inputs, targets = inputs.to(device), targets.to(device)
+            inputs, targets = inputs.to(device, non_blocking=True), targets.to(device, non_blocking=True)
 
             # Validate targets are within range
             if targets.max() >= num_classes:
@@ -563,7 +547,7 @@ def main():
         correct, total = 0, 0
         with torch.no_grad():
             for inputs, targets in val_loader:
-                inputs, targets = inputs.to(device), targets.to(device)
+                inputs, targets = inputs.to(device, non_blocking=True), targets.to(device, non_blocking=True)
 
                 # Validate targets are within range
                 if targets.max() >= num_classes:
@@ -584,9 +568,14 @@ def main():
         val_acc_list.append(val_acc)
 
         print(f"Epoch [{epoch+1}/{num_epochs}] Loss: {running_loss:.4f} | Train Acc: {train_acc:.2f}% | Val Acc: {val_acc:.2f}%")
-        
+
         # Save checkpoint after each epoch
         checkpoint_path = os.path.join(checkpoint_dir, f"checkpoint_epoch_{epoch+1}.pth")
+
+        # Clear CUDA cache before saving to free up memory
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
         torch.save({
             'epoch': epoch + 1,
             'model_state_dict': model.state_dict(),
@@ -594,23 +583,34 @@ def main():
             'train_acc': train_acc,
             'val_acc': val_acc,
             'train_acc_history': train_acc_list,
-            'val_acc_history': val_acc_list
+            'val_acc_history': val_acc_list,
+            'device': str(device)  # Save device information
         }, checkpoint_path)
         print(f"Checkpoint saved to {checkpoint_path}")
-        
+
         # Save best model
         if val_acc > best_val_acc:
             best_val_acc = val_acc
             best_model_path = os.path.join(checkpoint_dir, "best_model.pth")
-            torch.save(model, best_model_path)
+            # Save best model to CPU for compatibility
+            model_cpu = model.to('cpu')
+            torch.save(model_cpu, best_model_path)
+            # Move model back to original device
+            model = model.to(device)
             print(f"New best model saved with validation accuracy: {val_acc:.2f}%")
 
     # --- Save final model ---
     model.zero_grad()  # Clear gradients to reduce file size
     model_filename = "resnet18_segmented_imagenet_finetuned.pth"
-    torch.save(model, model_filename)
+
+    # Move model to CPU before saving to ensure compatibility
+    model_cpu = model.to('cpu')
+    torch.save(model_cpu, model_filename)
     print(f"Model saved to {model_filename}")
-    
+
+    # Move model back to original device
+    model = model.to(device)
+
     # Also save final checkpoint with all training history
     final_checkpoint = os.path.join(checkpoint_dir, "final_checkpoint.pth")
     torch.save({
@@ -621,9 +621,14 @@ def main():
         'final_val_acc': val_acc_list[-1],
         'train_acc_history': train_acc_list,
         'val_acc_history': val_acc_list,
-        'best_val_acc': best_val_acc
+        'best_val_acc': best_val_acc,
+        'device': str(device)  # Save device information
     }, final_checkpoint)
     print(f"Final checkpoint saved to {final_checkpoint}")
+
+    # Clear CUDA cache to free up memory
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
     # --- Plot accuracy ---
     plt.figure(figsize=(10, 6))
@@ -640,4 +645,20 @@ def main():
 if __name__ == "__main__":
     import multiprocessing
     multiprocessing.freeze_support()
+
+    # Set PyTorch to use deterministic algorithms for reproducibility
+    # Comment these out if they cause performance issues
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+    # Run with higher precision if available
+    if torch.cuda.is_available():
+        # Enable TF32 precision on Ampere GPUs (A100, RTX 30xx, etc.)
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
+        print("TF32 precision enabled for compatible GPUs")
+
+        # Set CUDA device to device 0
+        torch.cuda.set_device(0)
+
     main()

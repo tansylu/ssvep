@@ -274,10 +274,20 @@ def find_dominant_frequencies(fourier_transformed_activations, fps, threshold_fa
 
     return dominant_frequencies
 
-def save_dominant_frequencies_to_csv(dominant_frequencies, fourier_transformed_activations, output_csv_path, image_path, gif_frequency1, gif_frequency2, fps=30):
+def save_dominant_frequencies_to_csv(dominant_frequencies, fourier_transformed_activations, output_csv_path, image_path, gif_frequency1, gif_frequency2, fps=30, use_v2_scoring=True):
     """
     Saves dominant frequencies to CSV file, handling multiple peaks per filter.
     This function appends data to the CSV file, creating a new file if it doesn't exist.
+    
+    Args:
+        dominant_frequencies: Dictionary of dominant frequencies
+        fourier_transformed_activations: Dictionary of FFT results
+        output_csv_path: Path to output CSV file
+        image_path: Path to the image being processed
+        gif_frequency1: First GIF frequency
+        gif_frequency2: Second GIF frequency
+        fps: Frames per second
+        use_v2_scoring: Whether to use the new v2 scoring algorithm
     """
     file_exists = os.path.exists(output_csv_path)
     with open(output_csv_path, mode='a', newline='') as csv_file:
